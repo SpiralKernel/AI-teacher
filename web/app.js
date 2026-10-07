@@ -12,6 +12,9 @@ const state = {
   draft: "",
   busy: false,
   chatting: false,
+  difficulty: null,
+  allowChallenge: true,
+  typeFilter: "practiced",
 };
 const root = document.querySelector("#app");
 let toastTimer;
@@ -121,6 +124,7 @@ function stats() {
 function setView(view) {
   state.view = view;
   render();
+  window.scrollTo({ top: 0, behavior: "instant" });
 }
 function render() {
   document.querySelectorAll("[data-view]").forEach((n) => {
@@ -133,6 +137,7 @@ function render() {
   document.querySelector("#page-title").textContent = {
     learn: "学习地图",
     practice: "开始练习",
+    materials: "拍照与试卷",
     progress: "学习记录",
   }[state.view];
   root.replaceChildren(
@@ -140,7 +145,9 @@ function render() {
       ? learnView()
       : state.view === "practice"
         ? practiceView()
-        : progressView(),
+        : state.view === "materials"
+          ? materialView()
+          : progressView(),
   );
 }
 function learnView() {
@@ -239,12 +246,17 @@ function learnView() {
 async function refreshStudent() {
   state.student = await api("/student");
 }
-async function startPractice(id) {
+async function startPractice(id, options = {}) {
   if (state.busy) return;
   state.busy = true;
   render();
   try {
-    const attempt = await api("/practice/next", { knowledge_id: id || null });
+    const attempt = await api("/practice/next", {
+      knowledge_id: id || null,
+      difficulty: state.difficulty,
+      allow_challenge: state.allowChallenge,
+      ...options,
+    });
     if (state.attempt?.attempt_id !== attempt.attempt_id) {
       state.result = null;
       state.hint = null;
@@ -266,6 +278,7 @@ function practiceView() {
       "div",
       {},
       heading("把问题，拆成一小步。", "不懂就问，不必一次全做对。"),
+      difficultyControls(),
       el(
         "div",
         { class: "empty" },
@@ -365,7 +378,17 @@ function practiceView() {
       "div",
       { class: "question-meta" },
       el("span", { class: "tag" }, k.name),
-      el("span", {}, q.difficulty === 1 ? "基础练习" : "进阶一步"),
+      el(
+        "span",
+        {},
+        { 1: "基础练习", 2: "进阶一步", 3: "挑战变式" }[q.difficulty],
+      ),
+      el(
+        "span",
+        {},
+        (state.student.question_types || []).find((t) => t.id === q.type_id)
+          ?.name || "",
+      ),
       el("span", {}, "· 数值作答"),
     ),
     el("h2", { class: "question-text" }, q.stem),
@@ -393,6 +416,7 @@ function practiceView() {
     "div",
     {},
     heading("专注眼前这一小步。", a.reason),
+    difficultyControls(),
     el("div", { class: "practice-layout" }, left, tutorView()),
   );
 }
@@ -584,7 +608,13 @@ function progressView() {
         "div",
         { class: "empty" },
         el("h2", {}, "你的进步，会在这里留下痕迹。"),
-        el("p", {}, "完成第一道题后，就能看到作答记录与知识点变化。"),
+        el(
+          "p",
+          {},
+          state.student.imported_completed
+            ? "试卷评价已计入上方题型画像；在线练习记录会显示在这里。"
+            : "完成第一道题后，就能看到作答记录与知识点变化。",
+        ),
         button("开始练习", () => startPractice()),
       );
   return el(
@@ -595,6 +625,7 @@ function progressView() {
       "这里记录你的每一次尝试，不只记录答对的那一次。",
     ),
     stats(),
+    typeProfilePanel(),
     el("div", { class: "section-title" }, el("h2", {}, "值得再关注的地方")),
     state.student.weak_patterns.length
       ? el(
@@ -615,6 +646,19 @@ function progressView() {
         ),
     el("p", { class: "assessment" }, state.student.assessment_note),
     el(
+      "p",
+      { class: "note" },
+      `已核对并计入档案的试卷题：${state.student.imported_completed || 0} 道。试卷原页与逐题评价保存在“拍照与试卷”。`,
+    ),
+    button(
+      "查看试卷分析  ↗",
+      async () => {
+        await loadMaterials();
+        setView("materials");
+      },
+      "light",
+    ),
+    el(
       "div",
       { class: "section-title", style: "margin-top:28px" },
       el("h2", {}, "最近的练习"),
@@ -628,9 +672,142 @@ function progressView() {
     ),
   );
 }
+function difficultyControls() {
+  const select = el("select", {
+    id: "practice-difficulty",
+    onChange: (e) => {
+      state.difficulty = e.target.value ? Number(e.target.value) : null;
+    },
+  });
+  for (const [value, label] of [
+    ["", "自动选择"],
+    ["1", "基础"],
+    ["2", "进阶"],
+    ["3", "挑战"],
+  ])
+    select.append(el("option", { value }, label));
+  select.value = state.difficulty || "";
+  return el(
+    "div",
+    { class: "difficulty-controls" },
+    el("label", { for: "practice-difficulty" }, "下一题难度"),
+    select,
+    el(
+      "label",
+      { class: "check-line" },
+      el("input", {
+        type: "checkbox",
+        checked: state.allowChallenge,
+        onChange: (e) => {
+          state.allowChallenge = e.target.checked;
+        },
+      }),
+      "自动模式随机混入挑战题（15%）",
+    ),
+    el("small", {}, "基础与挑战按不同题型记录；难度标签尚未经过学生群体校准。"),
+  );
+}
+function typeProfilePanel() {
+  const types = state.student.question_types || [];
+  const filter = el(
+    "select",
+    {
+      "aria-label": "筛选题型画像",
+      onChange: (e) => {
+        state.typeFilter = e.target.value;
+        render();
+      },
+    },
+    [
+      ["practiced", "已练习与 AI 新建"],
+      ["all", "全部题型"],
+      ["weak", "需要巩固"],
+      ["ai", "AI 新建题型"],
+    ].map(([value, label]) => el("option", { value }, label)),
+  );
+  filter.value = state.typeFilter;
+  const selected = types.filter(
+    (t) =>
+      state.typeFilter === "all" ||
+      (state.typeFilter === "ai" && t.source === "ai") ||
+      (state.typeFilter === "weak" && t.attempts > 0 && t.mastery < 0.6) ||
+      (state.typeFilter === "practiced" &&
+        (t.attempts > 0 || t.source === "ai")),
+  );
+  return el(
+    "section",
+    { class: "type-profile" },
+    el("div", { class: "section-title" }, el("h2", {}, "题型画像"), filter),
+    el(
+      "p",
+      { class: "assessment" },
+      "同一知识点下的不同解题结构分开记录。AI 可识别并新建题型；新分类带来源标记，可在试卷核对时纠正。",
+    ),
+    selected.length
+      ? el(
+          "div",
+          { class: "type-grid" },
+          selected.map((t) =>
+            el(
+              "article",
+              { class: "type-card" },
+              el(
+                "div",
+                { class: "section-title" },
+                el("h3", {}, t.name),
+                el("span", { class: "ai-status" }, t.status),
+              ),
+              el(
+                "p",
+                {},
+                `${t.attempts} 次有效证据 · ${t.correct} 次答对 · ${t.mastery === null ? "待诊断" : `掌握估计 ${Math.round(t.mastery * 100)}%`}`,
+              ),
+              el(
+                "p",
+                { class: "type-origin" },
+                t.source === "ai"
+                  ? "AI 新建分类 · 尚待分类校验"
+                  : "原创模板题型",
+              ),
+              el(
+                "div",
+                { class: "actions" },
+                t.id.startsWith("template:") || t.id.startsWith("challenge:")
+                  ? button(
+                      "练这个题型",
+                      () =>
+                        startPractice(t.knowledge_ids[0], {
+                          question_type_id: t.id,
+                        }),
+                      "light",
+                    )
+                  : t.knowledge_ids.length
+                    ? button(
+                        "练关联知识点",
+                        () => startPractice(t.knowledge_ids[0]),
+                        "light",
+                      )
+                    : el("small", {}, "暂无对应练习，等待补充题目"),
+              ),
+            ),
+          ),
+        )
+      : el(
+          "p",
+          { class: "note" },
+          "此范围暂时没有题型证据。完成练习或导入已作答试卷后会更新。",
+        ),
+  );
+}
 async function exportData() {
   try {
     const history = await api("/history");
+    const list = await api("/imports");
+    const imports = await Promise.all(
+      list.items
+        .filter((x) => x.status === "confirmed")
+        .map((x) => api(`/imports/${x.id}`)),
+    );
     const blob = new Blob(
       [
         JSON.stringify(
@@ -638,6 +815,7 @@ async function exportData() {
             exported_at: new Date().toISOString(),
             student: state.student,
             history: history.items,
+            imports,
           },
           null,
           2,
@@ -656,6 +834,14 @@ async function exportData() {
 document.querySelectorAll("[data-view]").forEach((n) =>
   n.addEventListener("click", async () => {
     if (state.busy) return;
+    if (n.dataset.view === "materials") {
+      try {
+        await loadMaterials();
+      } catch (e) {
+        toast(e.message);
+        return;
+      }
+    }
     if (n.dataset.view === "progress") {
       try {
         state.history = (await api("/history")).items;

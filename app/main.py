@@ -1,7 +1,9 @@
 import asyncio
+import json
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -11,10 +13,15 @@ from app.curriculum import NODES, UNITS, VERSION
 from app.db import audit, connect, dumps, initialize, now
 from app.learning import get_attempt, history, next_question, profile, recommend, submit
 from app.tutor import respond
+from app import materials
+from app.question_types import template_type_id
 
 
 class PracticeRequest(BaseModel):
     knowledge_id: str | None = Field(default=None, max_length=50)
+    difficulty: int | None = Field(default=None, ge=1, le=3)
+    allow_challenge: bool = False
+    question_type_id: str | None = Field(default=None,max_length=80)
 
 
 class AnswerRequest(BaseModel):
@@ -31,11 +38,14 @@ def create_app(settings: Settings | None = None):
     @asynccontextmanager
     async def lifespan(app):
         initialize(settings.database_path)
+        with connect(settings.database_path) as db:
+            db.execute("UPDATE imports SET status='failed',error='服务重启中断了识别，请重试。' WHERE status='processing'")
         yield
 
-    app = FastAPI(title="AI-teacher · 七年级数学", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="AI-teacher · 七年级数学", version="0.2.0", lifespan=lifespan)
     app.state.settings = settings
     tutor_slots = asyncio.Semaphore(1)
+    vision_slots = asyncio.Semaphore(1)
 
     @app.exception_handler(ValueError)
     async def value_error_handler(request: Request, exc: ValueError):
@@ -43,6 +53,13 @@ def create_app(settings: Settings | None = None):
 
     @app.middleware("http")
     async def security_headers(request, call_next):
+        if request.url.path == "/api/v1/imports" and request.method == "POST":
+            try:
+                length = int(request.headers.get("content-length", "0"))
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "无效的上传长度"})
+            if length > materials.MAX_TOTAL + 1024 * 1024:
+                return JSONResponse(status_code=413, content={"detail": "每次上传总大小不能超过 40MB"})
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
@@ -57,6 +74,116 @@ def create_app(settings: Settings | None = None):
         return {"status": "ok", "ai_configured": bool(settings.deepseek_api_key),
                 "model": settings.deepseek_model, "question_count": count,
                 "curriculum_version": VERSION, "mode": "local_single_student"}
+
+    @app.post("/api/v1/imports", status_code=201)
+    async def upload_material(files: list[UploadFile] = File(...), mode: str = Form("completed"),
+                              page_start: int = Form(1), page_end: int = Form(0)):
+        if mode not in {"completed", "blank"} or page_start < 1 or page_end < 0:
+            raise HTTPException(422, "请选择材料类型和有效页码")
+        if not 1 <= len(files) <= 8:
+            raise HTTPException(422, "每次请选择 1—8 个文件")
+        content, total = [], 0
+        for file in files:
+            value = await file.read(materials.MAX_FILE + 1)
+            if len(value) > materials.MAX_FILE:
+                raise HTTPException(413, "单个文件不能超过 20MB")
+            total += len(value)
+            if total > materials.MAX_TOTAL:
+                raise HTTPException(413, "每次上传总大小不能超过 40MB")
+            content.append((file.filename or "上传文件", value))
+        import_id = await run_in_threadpool(materials.create_import, settings, content, mode, page_start, page_end)
+        with connect(settings.database_path) as db:
+            return materials.get_import(db, import_id)
+
+    @app.get("/api/v1/imports")
+    def list_materials():
+        with connect(settings.database_path) as db:
+            rows = db.execute("SELECT id,title,mode,status,page_count,error,created_at FROM imports WHERE student_id='demo' ORDER BY created_at DESC LIMIT 100")
+            return {"items": [dict(r) for r in rows]}
+
+    @app.get("/api/v1/imports/{import_id}")
+    def get_material(import_id: str):
+        with connect(settings.database_path) as db:
+            return materials.get_import(db, import_id)
+
+    @app.get("/api/v1/imports/{import_id}/pages/{page_number}")
+    def material_page(import_id: str, page_number: int):
+        with connect(settings.database_path) as db:
+            materials.require_import(db, import_id)
+            row = db.execute("SELECT file_name FROM import_pages WHERE import_id=? AND page_number=?", (import_id, page_number)).fetchone()
+            if not row:
+                raise HTTPException(404, "页面不存在")
+        return FileResponse(materials.storage(settings) / import_id / row["file_name"], media_type="image/jpeg")
+
+    @app.post("/api/v1/imports/{import_id}/recognize", status_code=202)
+    def recognize_material(import_id: str, background_tasks: BackgroundTasks):
+        if not settings.deepseek_api_key:
+            raise HTTPException(503, "请先在服务端配置 DeepSeek Key，再进行识图")
+        with connect(settings.database_path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = materials.require_import(db, import_id)
+            if row["status"] not in {"uploaded", "failed"}:
+                raise HTTPException(409, "当前材料正在识别或已经识别，请查看结果")
+            if db.execute("SELECT COUNT(*) FROM imports WHERE status='processing'").fetchone()[0] >= 2:
+                raise HTTPException(429, "已有两份材料正在识别，请等待完成")
+            db.execute("UPDATE imports SET status='processing',error=NULL WHERE id=?", (import_id,))
+        background_tasks.add_task(materials.process_import, settings, import_id, vision_slots)
+        return {"id": import_id, "status": "processing"}
+
+    @app.post("/api/v1/imports/{import_id}/confirm")
+    def confirm_material(import_id: str, body: materials.Confirmation):
+        with connect(settings.database_path) as db:
+            return materials.confirm_import(db, import_id, body)
+
+    @app.post("/api/v1/imports/{import_id}/items/{item_id}/tutor")
+    async def material_tutor(import_id: str, item_id: str, body: materials.MaterialMessage):
+        if not body.message.strip():
+            raise HTTPException(422, "请输入想讨论的问题")
+        async with tutor_slots:
+            with connect(settings.database_path) as db:
+                db.execute("BEGIN IMMEDIATE")
+                row = materials.require_import(db, import_id)
+                item_row = db.execute("SELECT data FROM import_items WHERE import_id=? AND id=?", (import_id, item_id)).fetchone()
+                if not item_row:
+                    raise HTTPException(404, "题目不存在")
+                item = json.loads(item_row["data"])
+                previous = list(db.execute("SELECT * FROM import_messages WHERE item_id=? ORDER BY id", (item_id,)))
+                if len(previous) >= 12:
+                    raise HTTPException(429, "本题已讨论 12 轮，请休息一下")
+                student_profile=profile(db)
+                summary = {"knowledge":[{k: n[k] for k in ("id", "attempts", "mastery", "status")} for n in student_profile["knowledge"] if n["id"] in item["knowledge_ids"]],
+                           "question_type":[{k:t[k] for k in ("name","attempts","mastery","status")} for t in student_profile["question_types"] if t["id"]==item.get("question_type_id")]}
+                # 核对前讨论同样算辅助，最终确认时降低正确证据权重。
+                if row["status"] != "confirmed":
+                    item["assisted"] = True
+                    db.execute("UPDATE import_items SET data=? WHERE id=?", (dumps(item), item_id))
+            result = await materials.discuss_item(settings, item, body.message, previous, summary, row["status"] == "confirmed")
+            with connect(settings.database_path) as db:
+                db.execute("INSERT INTO import_messages(item_id,user_message,response,created_at) VALUES(?,?,?,?)", (item_id, body.message, dumps(result), now()))
+            return result
+
+    @app.get("/api/v1/imports/{import_id}/items/{item_id}/messages")
+    def material_messages(import_id: str, item_id: str):
+        with connect(settings.database_path) as db:
+            materials.require_import(db, import_id)
+            if not db.execute("SELECT 1 FROM import_items WHERE import_id=? AND id=?", (import_id, item_id)).fetchone():
+                raise HTTPException(404, "题目不存在")
+            return {"items": [{"message": r["user_message"], "response": json.loads(r["response"])} for r in db.execute("SELECT * FROM import_messages WHERE item_id=? ORDER BY id", (item_id,))]}
+
+    @app.delete("/api/v1/imports/{import_id}")
+    def delete_material(import_id: str):
+        with connect(settings.database_path) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = materials.require_import(db, import_id)
+            if row["status"] == "processing":
+                raise HTTPException(409, "正在识别的材料暂不能删除，请等待完成")
+            db.execute("DELETE FROM import_messages WHERE item_id IN (SELECT id FROM import_items WHERE import_id=?)", (import_id,))
+            for table in ("import_evidence", "import_items", "import_pages", "imports"):
+                db.execute(f"DELETE FROM {table} WHERE {'id' if table == 'imports' else 'import_id'}=?", (import_id,))
+            audit(db, "material_deleted", {"import_id": import_id})
+        import shutil
+        shutil.rmtree(materials.storage(settings) / import_id, ignore_errors=True)
+        return {"deleted": True}
 
     @app.get("/api/v1/curriculum")
     def curriculum():
@@ -73,7 +200,7 @@ def create_app(settings: Settings | None = None):
     @app.post("/api/v1/practice/next")
     def practice(body: PracticeRequest):
         with connect(settings.database_path) as db:
-            return next_question(db, body.knowledge_id)
+            return next_question(db, body.knowledge_id, body.difficulty, body.allow_challenge, body.question_type_id)
 
     @app.post("/api/v1/attempts/{attempt_id}/answer")
     def answer(attempt_id: str, body: AnswerRequest):
@@ -105,8 +232,12 @@ def create_app(settings: Settings | None = None):
                     raise HTTPException(429, "这道题已讨论 12 轮，建议休息一下或开始下一题")
                 if row["status"] == "assigned":
                     db.execute("UPDATE attempts SET hint_used=1 WHERE id=?", (attempt_id,))
-                state = next(n for n in profile(db)["knowledge"] if n["id"] == q["knowledge_id"])
+                student_profile=profile(db)
+                state = next(n for n in student_profile["knowledge"] if n["id"] == q["knowledge_id"])
                 summary = {k: state[k] for k in ("attempts", "mastery", "status")}
+                relevant_type=next((t for t in student_profile["question_types"] if t["id"]==template_type_id(q)),None)
+                summary["question_type"]={k:relevant_type[k] for k in ("name","attempts","mastery","status")} if relevant_type else None
+                summary["difficulty"]=q["difficulty"]
             result = await respond(settings, q, body.message, summary, previous, submitted=row["status"] == "submitted")
             with connect(settings.database_path) as db:
                 db.execute("INSERT INTO tutor_messages(attempt_id,user_message,response,created_at) VALUES(?,?,?,?)",

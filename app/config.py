@@ -12,4 +12,6 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
+    deepseek_vision_model: str = "deepseek-flash"
     ai_timeout_seconds: float = Field(default=35, ge=1, le=120)
+    vision_timeout_seconds: float = Field(default=90, ge=5, le=180)

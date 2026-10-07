@@ -78,7 +78,7 @@ def test_full_learning_flow_and_idempotency(client, settings):
     assert len(client.get("/api/v1/history").json()["items"]) == 1
     with connect(settings.database_path) as db:
         # 提交触发补题，使可用题数恢复为 6。
-        assert db.execute("SELECT COUNT(*) FROM questions WHERE knowledge_id='addition'").fetchone()[0] == 7
+        assert db.execute("SELECT COUNT(*) FROM questions WHERE knowledge_id='addition' AND json_extract(data,'$.difficulty')<3").fetchone()[0] == 7
 
 
 def test_hints_lower_weight_and_invalid_input_does_not_mutate(client, settings):

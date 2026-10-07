@@ -2,6 +2,7 @@
 .env
 data/*.sqlite3*
 data/backups/
+data/imports/
 __pycache__/
 .pytest_cache/
 *.pyc
