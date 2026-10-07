@@ -1,0 +1,8 @@
+.venv/
+.env
+data/*.sqlite3*
+data/backups/
+__pycache__/
+.pytest_cache/
+*.pyc
+.DS_Store

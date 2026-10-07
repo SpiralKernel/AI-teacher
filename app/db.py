@@ -1,0 +1,107 @@
+import hashlib
+import json
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+
+from app.curriculum import NODES, VERSION
+from app.questions import make_question, validate_question
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def dumps(value) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+@contextmanager
+def connect(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path, timeout=15)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA foreign_keys = ON")
+    try:
+        with db:
+            yield db
+    finally:
+        db.close()
+
+
+def audit(db, kind: str, details: dict):
+    db.execute("INSERT INTO audit_events(kind,details,created_at) VALUES(?,?,?)", (kind, dumps(details), now()))
+
+
+def initialize(path: Path):
+    with connect(path) as db:
+        db.execute("PRAGMA journal_mode = WAL")
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version > 1:
+            raise RuntimeError("数据库版本高于应用支持版本，拒绝降级打开。")
+        if version == 0:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE knowledge(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+                CREATE TABLE questions(
+                    id TEXT PRIMARY KEY, knowledge_id TEXT NOT NULL REFERENCES knowledge(id),
+                    content_hash TEXT NOT NULL UNIQUE, data TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE seed_state(knowledge_id TEXT PRIMARY KEY REFERENCES knowledge(id), next_index INTEGER NOT NULL);
+                CREATE TABLE students(id TEXT PRIMARY KEY, nickname TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE attempts(
+                    id TEXT PRIMARY KEY, student_id TEXT NOT NULL REFERENCES students(id),
+                    question_id TEXT NOT NULL REFERENCES questions(id), status TEXT NOT NULL DEFAULT 'assigned'
+                    CHECK(status IN ('assigned','submitted','skipped')),
+                    hint_used INTEGER NOT NULL DEFAULT 0, answer TEXT, result TEXT,
+                    assigned_at TEXT NOT NULL, submitted_at TEXT);
+                CREATE UNIQUE INDEX one_active_attempt ON attempts(student_id) WHERE status='assigned';
+                CREATE INDEX attempts_student ON attempts(student_id,submitted_at);
+                CREATE TABLE mastery(
+                    student_id TEXT NOT NULL REFERENCES students(id),
+                    knowledge_id TEXT NOT NULL REFERENCES knowledge(id),
+                    success REAL NOT NULL DEFAULT 0, failure REAL NOT NULL DEFAULT 0,
+                    attempts INTEGER NOT NULL DEFAULT 0, last_seen TEXT,
+                    PRIMARY KEY(student_id,knowledge_id));
+                CREATE TABLE tutor_messages(
+                    id INTEGER PRIMARY KEY, attempt_id TEXT NOT NULL REFERENCES attempts(id),
+                    user_message TEXT NOT NULL, response TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE audit_events(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,details TEXT NOT NULL,created_at TEXT NOT NULL);
+                PRAGMA user_version = 1;
+                COMMIT;
+            """)
+        db.execute("BEGIN IMMEDIATE")
+        for node in NODES:
+            db.execute("INSERT INTO knowledge VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+                       (node["id"], dumps(node)))
+            db.execute("INSERT OR IGNORE INTO seed_state VALUES(?,0)", (node["id"],))
+        db.execute("INSERT OR IGNORE INTO students VALUES('demo','学习者',?)", (now(),))
+        audit(db, "curriculum_sync", {"version": VERSION, "nodes": len(NODES)})
+        replenish(db)
+
+
+def replenish(db, minimum: int = 6) -> int:
+    """为演示学生补足未做题；最多尝试 400 个参数，防止有限题型耗尽时死循环。"""
+    added = 0
+    for node in NODES:
+        available = db.execute("""SELECT COUNT(*) FROM questions q WHERE knowledge_id=? AND NOT EXISTS
+            (SELECT 1 FROM attempts a WHERE a.question_id=q.id AND a.student_id='demo' AND a.status='submitted')""",
+                               (node["id"],)).fetchone()[0]
+        needed = max(0, minimum - available)
+        index = db.execute("SELECT next_index FROM seed_state WHERE knowledge_id=?", (node["id"],)).fetchone()[0]
+        for _ in range(400 if needed else 0):
+            q = make_question(node["id"], index)
+            index += 1
+            if not validate_question(q):
+                raise ValueError("题目未通过校验")
+            content_hash = hashlib.sha256(q["stem"].encode()).hexdigest()
+            cursor = db.execute("INSERT OR IGNORE INTO questions VALUES(?,?,?,?,?)",
+                                (q["id"], node["id"], content_hash, dumps(q), now()))
+            added += cursor.rowcount
+            needed -= cursor.rowcount
+            if needed <= 0:
+                break
+        db.execute("UPDATE seed_state SET next_index=? WHERE knowledge_id=?", (index, node["id"]))
+    if added:
+        audit(db, "verified_question_replenishment", {"added": added, "template_version": "1"})
+    return added

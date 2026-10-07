@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#173e35" />
+    <meta
+      name="description"
+      content="AI-teacher，七年级数学学习伙伴。一步一步理解，每一次练习都有迹可循。"
+    />
+    <title>AI-teacher · 数学学习伙伴</title>
+    <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="AI-teacher 首页"
+        ><img src="/static/icon.svg" width="42" height="42" alt="" /><span
+          >AI-teacher<small>你的数学学习伙伴</small></span
+        ></a
+      >
+      <div class="course-label">我的学习空间</div>
+      <nav aria-label="主导航">
+        <button class="nav-item active" data-view="learn">
+          <span aria-hidden="true">▦</span>学习地图
+        </button>
+        <button class="nav-item" data-view="practice">
+          <span aria-hidden="true">✎</span>开始练习
+        </button>
+        <button class="nav-item" data-view="progress">
+          <span aria-hidden="true">◷</span>学习记录
+        </button>
+      </nav>
+      <div class="sidebar-bottom">
+        <span class="seed-icon">✦</span>
+        <p>理解，比答对更重要。<br /><small>每天一点，慢慢走远。</small></p>
+        <div class="learner">
+          <span class="avatar">学</span>
+          <div>学习者<small>七年级 · 上册</small></div>
+        </div>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <span
+          >数学 <span class="slash">/</span>
+          <strong id="page-title">学习地图</strong></span
+        ><span class="local-badge"><i></i>本地学习空间</span>
+      </header>
+      <div id="app" aria-live="polite">
+        <div class="empty">正在准备你的学习空间…</div>
+      </div>
+      <footer>AI-teacher · 从理解开始 <span>七年级上册 / 起步版</span></footer>
+    </main>
+    <div id="toast" role="alert" hidden></div>
+  </body>
+</html>
