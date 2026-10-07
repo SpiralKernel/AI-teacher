@@ -92,19 +92,21 @@ function heading(title, text, tag = "七年级 · 上册") {
 }
 function stats() {
   const s = state.student,
+    completed = s.all_completed ?? s.completed,
+    correct = s.all_correct ?? s.correct,
     stable = s.knowledge.filter((n) => n.status === "掌握较稳").length;
   return el(
     "div",
     { class: "stats" },
     [
-      ["✓", s.completed, "题", "累计完成练习"],
+      ["✓", completed, "题", "累计完成练习"],
       [
         "◷",
-        s.completed ? Math.round((s.correct / s.completed) * 100) : "—",
-        s.completed ? "%" : "",
+        completed ? Math.round((correct / completed) * 100) : "—",
+        completed ? "%" : "",
         "作答正确率",
       ],
-      ["✦", stable, "/ 12", "掌握较稳的知识点"],
+      ["✦", stable, "/ 12", "七上数学掌握较稳的知识点"],
     ].map(([icon, value, unit, label]) =>
       el(
         "div",
@@ -138,17 +140,38 @@ function render() {
     learn: "学习地图",
     practice: "开始练习",
     materials: "拍照与试卷",
+    bank: "全科题库",
     progress: "学习记录",
   }[state.view];
+  document.querySelector(".topbar > span").firstChild.textContent =
+    state.view === "bank" ? "初中 " : "数学 ";
+  document.querySelector("footer span").textContent =
+    state.view === "bank" ? "初中全学段 / 多科题库" : "七年级上册 / 起步版";
   root.replaceChildren(
     state.view === "learn"
       ? learnView()
       : state.view === "practice"
         ? practiceView()
-        : state.view === "materials"
-          ? materialView()
-          : progressView(),
+        : state.view === "bank"
+          ? bankView()
+          : state.view === "materials"
+            ? materialView()
+            : progressView(),
   );
+  if (window.renderMathInElement)
+    window.renderMathInElement(root, {
+      delimiters: [
+        { left: "$$", right: "$$", display: false },
+        { left: "$", right: "$", display: false },
+        { left: "\\(", right: "\\)", display: false },
+        { left: "\\[", right: "\\]", display: true },
+      ],
+      throwOnError: false,
+      trust: false,
+      strict: "ignore",
+      maxExpand: 500,
+      maxSize: 12,
+    });
 }
 function learnView() {
   const recommended = knowledge(state.student.recommendation.knowledge_id);
@@ -626,6 +649,22 @@ function progressView() {
     ),
     stats(),
     typeProfilePanel(),
+    state.student.bank_summary?.length
+      ? el(
+          "section",
+          { class: "panel" },
+          el("h2", {}, "全科题库学习记录"),
+          el(
+            "p",
+            { class: "assessment" },
+            `已保存 ${state.student.bank_summary.reduce((n, s) => n + s.completed, 0)} 次全科作答；各科知识点与题型画像在全科题库中查看。`,
+          ),
+          button("查看全科画像", async () => {
+            await loadBank();
+            setView("bank");
+          }),
+        )
+      : null,
     el("div", { class: "section-title" }, el("h2", {}, "值得再关注的地方")),
     state.student.weak_patterns.length
       ? el(
@@ -816,6 +855,7 @@ async function exportData() {
             student: state.student,
             history: history.items,
             imports,
+            bank: await api("/bank/export"),
           },
           null,
           2,
@@ -837,6 +877,14 @@ document.querySelectorAll("[data-view]").forEach((n) =>
     if (n.dataset.view === "materials") {
       try {
         await loadMaterials();
+      } catch (e) {
+        toast(e.message);
+        return;
+      }
+    }
+    if (n.dataset.view === "bank") {
+      try {
+        await loadBank();
       } catch (e) {
         toast(e.message);
         return;

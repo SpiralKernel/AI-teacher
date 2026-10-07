@@ -3,6 +3,8 @@
 data/*.sqlite3*
 data/backups/
 data/imports/
+data/sources/
+data/bank_answers/
 __pycache__/
 .pytest_cache/
 *.pyc

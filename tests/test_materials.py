@@ -177,7 +177,7 @@ def test_recovery_and_migration_from_version_one(settings):
         a=c.post("/api/v1/practice/next",json={"knowledge_id":"absolute"}).json()
         c.post(f"/api/v1/attempts/{a['attempt_id']}/answer",json={"answer":"9999"})
     with connect(settings.database_path) as db:
-        for table in ("import_messages","import_evidence","import_items","import_pages","imports","question_types","challenge_state"):
+        for table in ("bank_messages","bank_reviews","bank_attempts","bank_question_tags","bank_taxonomy","bank_questions","bank_sources","import_messages","import_evidence","import_items","import_pages","imports","question_types","challenge_state"):
             db.execute(f"DROP TABLE {table}")
         db.execute("PRAGMA user_version=1")
     with TestClient(create_app(settings)) as c:

@@ -15,6 +15,7 @@ from app.learning import get_attempt, history, next_question, profile, recommend
 from app.tutor import respond
 from app import materials
 from app.question_types import template_type_id
+from app.bank_api import create_router
 
 
 class PracticeRequest(BaseModel):
@@ -40,10 +41,15 @@ def create_app(settings: Settings | None = None):
         initialize(settings.database_path)
         with connect(settings.database_path) as db:
             db.execute("UPDATE imports SET status='failed',error='服务重启中断了识别，请重试。' WHERE status='processing'")
+            for row in db.execute("SELECT attempt_id,data FROM bank_reviews WHERE json_extract(data,'$.status')='processing'").fetchall():
+                value=json.loads(row["data"])
+                value.update(status="failed",error="服务重启中断了评阅，请重新提交解答。")
+                db.execute("UPDATE bank_reviews SET data=? WHERE attempt_id=?",(dumps(value),row["attempt_id"]))
         yield
 
-    app = FastAPI(title="AI-teacher · 七年级数学", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="AI-teacher · 初中全科学习", version="0.3.0", lifespan=lifespan)
     app.state.settings = settings
+    app.include_router(create_router(settings))
     tutor_slots = asyncio.Semaphore(1)
     vision_slots = asyncio.Semaphore(1)
 
@@ -53,7 +59,7 @@ def create_app(settings: Settings | None = None):
 
     @app.middleware("http")
     async def security_headers(request, call_next):
-        if request.url.path == "/api/v1/imports" and request.method == "POST":
+        if (request.url.path == "/api/v1/imports" or request.url.path.endswith("/assess")) and request.method == "POST":
             try:
                 length = int(request.headers.get("content-length", "0"))
             except ValueError:
@@ -195,7 +201,9 @@ def create_app(settings: Settings | None = None):
         with connect(settings.database_path) as db:
             result = profile(db)
             knowledge_id, reason = recommend(db)
-        return {**result, "recommendation": {"knowledge_id": knowledge_id, "reason": reason}}
+            bank_summary=[dict(r) for r in db.execute("SELECT q.subject,q.stage,COUNT(*) completed,SUM(json_extract(a.result,'$.correct')) correct FROM bank_attempts a JOIN bank_questions q ON q.id=a.question_id WHERE a.student_id='demo' AND a.status='submitted' GROUP BY q.subject,q.stage")]
+        return {**result, "recommendation": {"knowledge_id": knowledge_id, "reason": reason},"bank_summary":bank_summary,
+                "all_completed":result["completed"]+sum(s["completed"] for s in bank_summary),"all_correct":result["correct"]+sum(s["correct"] or 0 for s in bank_summary)}
 
     @app.post("/api/v1/practice/next")
     def practice(body: PracticeRequest):

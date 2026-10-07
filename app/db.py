@@ -39,7 +39,7 @@ def initialize(path: Path):
     with connect(path) as db:
         db.execute("PRAGMA journal_mode = WAL")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version > 3:
+        if version > 4:
             raise RuntimeError("数据库版本高于应用支持版本，拒绝降级打开。")
         if version == 0:
             db.executescript("""
@@ -109,6 +109,38 @@ def initialize(path: Path):
                     UNIQUE(subject,grade,term,normalized_name));
                 CREATE TABLE challenge_state(knowledge_id TEXT PRIMARY KEY REFERENCES knowledge(id),next_index INTEGER NOT NULL);
                 PRAGMA user_version = 3;
+                COMMIT;
+            """)
+        if version < 4:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE bank_sources(id TEXT PRIMARY KEY,manifest TEXT NOT NULL,imported_at TEXT NOT NULL);
+                CREATE TABLE bank_questions(
+                    id TEXT PRIMARY KEY,source_id TEXT NOT NULL REFERENCES bank_sources(id),
+                    subject TEXT NOT NULL,stage TEXT NOT NULL,kind TEXT NOT NULL,status TEXT NOT NULL,
+                    difficulty INTEGER NOT NULL,content_hash TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,
+                    UNIQUE(subject,content_hash));
+                CREATE INDEX bank_filter ON bank_questions(subject,stage,status,difficulty);
+                CREATE TABLE bank_taxonomy(
+                    id TEXT PRIMARY KEY,subject TEXT NOT NULL,stage TEXT NOT NULL,kind TEXT NOT NULL,
+                    label TEXT NOT NULL,origin TEXT NOT NULL,needs_review INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(subject,stage,kind,label));
+                CREATE TABLE bank_question_tags(
+                    question_id TEXT NOT NULL REFERENCES bank_questions(id),
+                    tag_id TEXT NOT NULL REFERENCES bank_taxonomy(id),PRIMARY KEY(question_id,tag_id));
+                CREATE INDEX bank_tag_lookup ON bank_question_tags(tag_id,question_id);
+                CREATE TABLE bank_attempts(
+                    id TEXT PRIMARY KEY,student_id TEXT NOT NULL REFERENCES students(id),
+                    question_id TEXT NOT NULL REFERENCES bank_questions(id),
+                    status TEXT NOT NULL CHECK(status IN ('assigned','skipped','submitted')),
+                    assisted INTEGER NOT NULL DEFAULT 0,answer TEXT,result TEXT,
+                    created_at TEXT NOT NULL,submitted_at TEXT);
+                CREATE UNIQUE INDEX bank_one_active ON bank_attempts(student_id) WHERE status='assigned';
+                CREATE INDEX bank_attempt_student ON bank_attempts(student_id,submitted_at);
+                CREATE TABLE bank_reviews(attempt_id TEXT PRIMARY KEY REFERENCES bank_attempts(id),data TEXT NOT NULL);
+                CREATE TABLE bank_messages(id INTEGER PRIMARY KEY,attempt_id TEXT NOT NULL REFERENCES bank_attempts(id),
+                    user_message TEXT NOT NULL,response TEXT NOT NULL,created_at TEXT NOT NULL);
+                PRAGMA user_version=4;
                 COMMIT;
             """)
         db.execute("BEGIN IMMEDIATE")

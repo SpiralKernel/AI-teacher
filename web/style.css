@@ -15,6 +15,270 @@
   font-synthesis: none;
 }
 
+/* 多科题库与阅读/手写作答 */
+.bank-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.bank-filter:last-child {
+  grid-column: 1 / -1;
+}
+.bank-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+.bank-filter select,
+.bank-search input,
+.bank-review select {
+  width: 100%;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  background: #fafbf7;
+}
+.bank-search {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.bank-search input {
+  flex: 1;
+  width: auto;
+}
+.bank-search .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.bank-filters .note {
+  margin: 8px 0;
+}
+.bank-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.bank-card {
+  min-width: 0;
+}
+.bank-excerpt {
+  font-size: 14px;
+  line-height: 1.9;
+  margin: 18px 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.bank-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 16px 0;
+}
+.bank-tags .tag {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  font-size: 10px;
+}
+.bank-workspace {
+  margin: 30px 0;
+  scroll-margin-top: 20px;
+}
+.bank-study-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.bank-reading,
+.bank-response {
+  min-width: 0;
+}
+.bank-reading h2,
+.bank-response h2,
+.bank-tutor h2 {
+  font-size: 18px;
+  margin-top: 0;
+}
+.bank-stem {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  line-height: 2.1;
+  margin: 22px 0;
+}
+.reading-layout .bank-stem {
+  font-size: 17px;
+  line-height: 2.3;
+}
+.bank-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.bank-option {
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  line-height: 1.9;
+  cursor: pointer;
+  min-width: 0;
+}
+.bank-option > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.bank-option input {
+  margin-top: 7px;
+  flex-shrink: 0;
+}
+.bank-written textarea,
+.bank-review textarea,
+.bank-tutor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.9;
+  background: #fafbf7;
+  color: var(--ink);
+}
+.bank-written textarea {
+  min-height: 280px;
+}
+.bank-upload {
+  display: block;
+  margin-top: 16px;
+  font-size: 12px;
+}
+.bank-upload input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.bank-review {
+  border-top: 1px solid var(--line);
+  margin-top: 28px;
+  padding-top: 20px;
+  font-size: 13px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+}
+.bank-review > label {
+  display: block;
+  margin: 16px 0;
+}
+.bank-answer-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.bank-answer-images img {
+  width: 100px;
+  height: 130px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  background: white;
+}
+.bank-reference {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bank-profile {
+  margin: 32px 0;
+}
+.bank-history {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.bank-history summary {
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  line-height: 1.8;
+}
+.bank-tutor {
+  margin-top: 20px;
+}
+.bank-tutor .chat:empty {
+  display: none;
+}
+.bank-tutor .btn {
+  margin-top: 12px;
+}
+.bank-sources {
+  margin-top: 30px;
+  font-size: 12px;
+}
+.math-copy {
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.math-copy .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  padding: 5px 0;
+}
+.math-copy .katex {
+  max-width: 100%;
+}
+@media (max-width: 900px) {
+  .bank-study-layout {
+    grid-template-columns: 1fr;
+  }
+  .bank-list {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .bank-filter-grid {
+    grid-template-columns: 1fr;
+  }
+  .bank-filter:last-child {
+    grid-column: auto;
+  }
+  .bank-search {
+    flex-wrap: wrap;
+  }
+  .bank-search input {
+    flex: 1 1 100%;
+  }
+  .bank-stem,
+  .reading-layout .bank-stem {
+    font-size: 15px;
+    line-height: 2;
+  }
+  .bank-option {
+    padding: 10px;
+  }
+  nav .nav-item {
+    padding-left: 4px;
+    padding-right: 4px;
+    font-size: 10px;
+  }
+}
+
 .material-section {
   margin-top: 28px;
 }

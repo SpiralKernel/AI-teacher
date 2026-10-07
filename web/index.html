@@ -8,9 +8,16 @@
       name="description"
       content="AI-teacher，七年级数学学习伙伴。一步一步理解，每一次练习都有迹可循。"
     />
-    <title>AI-teacher · 数学学习伙伴</title>
+    <title>AI-teacher · 初中学习伙伴</title>
     <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/vendor/katex/katex.min.css" />
+    <script src="/static/vendor/katex/katex.min.js" defer></script>
+    <script
+      src="/static/vendor/katex/contrib/auto-render.min.js"
+      defer
+    ></script>
+    <script src="/static/bank.js" defer></script>
     <script src="/static/materials.js" defer></script>
     <script src="/static/app.js" defer></script>
   </head>
@@ -18,7 +25,7 @@
     <aside class="sidebar">
       <a class="brand" href="/" aria-label="AI-teacher 首页"
         ><img src="/static/icon.svg" width="42" height="42" alt="" /><span
-          >AI-teacher<small>你的数学学习伙伴</small></span
+          >AI-teacher<small>你的初中学习伙伴</small></span
         ></a
       >
       <div class="course-label">我的学习空间</div>
@@ -28,6 +35,9 @@
         </button>
         <button class="nav-item" data-view="practice">
           <span aria-hidden="true">✎</span>开始练习
+        </button>
+        <button class="nav-item" data-view="bank">
+          <span aria-hidden="true">▤</span>全科题库
         </button>
         <button class="nav-item" data-view="materials">
           <span aria-hidden="true">▧</span>拍照与试卷
