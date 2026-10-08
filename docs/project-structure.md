@@ -79,6 +79,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 | 工具 | 用途 |
 | --- | --- |
 | `scripts/fetch_sources.py` | 下载题库来源缓存 |
+| `scripts/fetch_textbooks.py` | 整理智慧教育平台公开人教初中教材目录；不获取登录后的正文 |
 | `python -m app.manage import-bank --stage junior` | 将缓存题库去重入库，增量映射目标 |
 | `scripts/export_curriculum.py` | 从运行时目录生成`docs/junior-curriculum.md`；`--check`检查一致性 |
 | `scripts/browser_smoke.py` | 原数学练习桌面/手机流程 |
