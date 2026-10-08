@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from app import bank, bank_ai
+from app import bank, bank_ai, courses
 from app.db import connect, dumps, now
 from app.materials import MAX_FILE, MAX_TOTAL
 
@@ -51,8 +51,10 @@ def create_router(settings):
     @router.get("/questions")
     def questions(subject: str = "math", stage: str = "junior", tag_id: str | None = None, difficulty: int | None = Query(None, ge=1, le=3),
                   answer_mode: str | None = None, source_id: str | None = None, query: str = Query("", max_length=200),
+                  course_book_id: str | None = Query(None, max_length=80), course_unit_id: str | None = Query(None, max_length=100),
                   limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0, le=100000)):
-        selection = bank.Selection(subject=subject, stage=stage, tag_id=tag_id, difficulty=difficulty, answer_mode=answer_mode, source_id=source_id)
+        selection = bank.Selection(subject=subject, stage=stage, tag_id=tag_id, difficulty=difficulty, answer_mode=answer_mode, source_id=source_id,
+                                   course_book_id=course_book_id, course_unit_id=course_unit_id)
         with connect(settings.database_path) as db:
             return bank.search(db, selection, query, limit, offset)
 
@@ -88,7 +90,8 @@ def create_router(settings):
                 candidates={key:t for key,t in candidates.items() if key==body.tag_id}
             if not candidates:
                 raise HTTPException(404,"当前范围没有可选择的标签")
-        prompt="根据初中学生当前科目的有效作答证据，从给定标签目录选出下一步应练的细分知识点或题型。少量证据只做诊断，不夸大掌握。必须返回目录中真实tag_id，不能创建标签或题目。输出JSON {tag_id:目录ID,difficulty:1到3,reason:简短中文推荐理由}。\n"+dumps({"subject":body.subject,"evidence":weak,"tags":[{k:t[k] for k in ("id","kind","label")} for t in candidates.values()]})
+            course_context = courses.context(db, body.subject, book_id=body.course_book_id, unit_id=body.course_unit_id) if body.stage == "junior" else None
+        prompt="根据初中学生当前科目的有效作答证据，从给定标签目录选出下一步应练的细分知识点或题型。结合课程阶段要求与前置知识，先诊断未测目标，再补有证据的漏洞。待诊断不等于不会；缺题目标不能伪装成已掌握。少量证据只做诊断，不夸大掌握。必须返回目录中真实tag_id，不能创建标签或题目。输出JSON {tag_id:目录ID,difficulty:1到3,reason:简短中文推荐理由}。\n"+dumps({"subject":body.subject,"course_requirements":course_context,"evidence":weak,"tags":[{k:t[k] for k in ("id","kind","label")} for t in candidates.values()]})
         async with tutor_slots:
             choice=await bank_ai.request_json(settings,[{"role":"system","content":prompt},{"role":"user","content":"请选择下一步练习。"}],bank_ai.Plan)
         if choice.tag_id not in candidates:
@@ -165,6 +168,7 @@ def create_router(settings):
                     db.execute("UPDATE bank_attempts SET assisted=1 WHERE id=?", (attempt_id,))
                 related = {t["id"] for t in q["tags"]}
                 summary = [t for t in bank.profile(db, q["subject"], q["stage"])["tags"] if t["id"] in related]
+                q["course_context"] = courses.context(db, q["subject"], q) if q["stage"] == "junior" else None
             result = await bank_ai.tutor(settings, q, body.message, previous, row["status"] == "submitted", summary)
             with connect(settings.database_path) as db:
                 db.execute("INSERT INTO bank_messages(attempt_id,user_message,response,created_at) VALUES(?,?,?,?)", (attempt_id, body.message, dumps(result), now()))

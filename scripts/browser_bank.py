@@ -31,7 +31,7 @@ def fixtures():
           "knowledge_tags":["一元一次方程"],"type_tags":["解答题"],"derived_type_tags":["解答题 · 一元一次方程"],
           "tags_source":"source","has_missing_assets":False,"issues":[],"provenance":{"dataset":"本机测试","license":"原创","url":"https://example.com"}}
     yield {**base,"id":"bank:test:math-written","stem":"解方程 $2x+1=7$，写出完整步骤。"}
-    yield {**base,"id":"bank:test:math-choice","stem":"计算 $1+2$。","kind":"single_choice","status":"ready","answer":"A","options":[{"key":"A","text":"$3$"},{"key":"B","text":"$4$"}]}
+    yield {**base,"id":"bank:test:math-choice","stem":"方程 $2x+1=7$ 的解是（ ）。","kind":"single_choice","status":"ready","answer":"A","options":[{"key":"A","text":"$x=3$"},{"key":"B","text":"$x=4$"}]}
     yield {**base,"id":"bank:test:reading","subject":"chinese","stem":"阅读下面的文章，回答问题。\n\n"+"清晨的校园里，树叶在风中轻轻摇动。小林停下脚步，发现一株幼苗从石缝里长出。他想起老师说过，观察生活，需要耐心，也需要提出自己的问题。\n"*18+"\n（1）概括小林的发现。\n（2）结合原文，说明这次发现给他的启示。", "knowledge_tags":["文章内容概括","联系语境理解"],"type_tags":["阅读理解"],"derived_type_tags":["阅读理解 · 文章内容概括"],"answer":"发现石缝中的幼苗；学会耐心观察、主动提问。","steps":["先找出核心事件，再结合语句分析启示。"]}
 
 
@@ -73,6 +73,19 @@ def main():
                 page.on('pageerror',lambda e:errors.append(str(e)))
                 page.goto(URL);page.get_by_role('button',name='全科题库',exact=False).click()
                 expect(page.get_by_role('heading',name='把每一科，都学明白。')).to_be_visible()
+                expect(page.get_by_role('heading',name='这个阶段，需要会什么')).to_be_visible()
+                expect(page.locator('#course-targets')).to_contain_text('2024修订')
+                page.get_by_label('学习阶段',exact=True).select_option('math-9-1')
+                expect(page.locator('.bank-card')).to_have_count(0)
+                page.reload();page.get_by_role('button',name='全科题库',exact=False).click()
+                expect(page.get_by_label('学习阶段',exact=True)).to_have_value('math-9-1')
+                page.get_by_label('学习阶段',exact=True).select_option('math-7-1')
+                expect(page.locator('.bank-card')).to_have_count(2)
+                page.get_by_label('当前学习单元',exact=True).select_option('math-7-1:u1')
+                expect(page.locator('.bank-card')).to_have_count(0)
+                page.get_by_label('当前学习单元',exact=True).select_option('math-7-1:u5')
+                expect(page.locator('.bank-card')).to_have_count(2)
+                page.screenshot(path=ROOT/'docs/preview-course-targets.png',full_page=True,animations='disabled')
                 expect(page.locator('.bank-card')).to_have_count(2)
                 assert page.locator('.katex').count()>0
                 page.get_by_label('作答方式',exact=True).select_option('choice')
@@ -103,6 +116,7 @@ def main():
                 assert len(page.locator('.bank-stem').first.inner_text())>900
                 page.evaluate('window.scrollTo(0,0)');page.screenshot(path=ROOT/'docs/preview-bank-reading.png',full_page=True,animations='disabled')
                 page.set_viewport_size({'width':390,'height':844})
+                expect(page.get_by_label('学习阶段',exact=True)).to_have_value('chinese-7-1')
                 assert page.evaluate('document.documentElement.scrollWidth<=innerWidth'),'手机全科阅读页横向溢出'
                 page.evaluate('window.scrollTo(0,0)');page.screenshot(path=ROOT/'docs/preview-bank-mobile.png',full_page=True,animations='disabled')
                 page.get_by_role('button',name='拍照与试卷',exact=False).click()

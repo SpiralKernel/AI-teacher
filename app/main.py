@@ -16,6 +16,8 @@ from app.tutor import respond
 from app import materials
 from app.question_types import template_type_id
 from app.bank_api import create_router
+from app.course_api import create_router as create_course_router
+from app import courses
 
 
 class PracticeRequest(BaseModel):
@@ -47,9 +49,10 @@ def create_app(settings: Settings | None = None):
                 db.execute("UPDATE bank_reviews SET data=? WHERE attempt_id=?",(dumps(value),row["attempt_id"]))
         yield
 
-    app = FastAPI(title="AI-teacher · 初中全科学习", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="AI-teacher · 初中全科学习", version="0.4.0", lifespan=lifespan)
     app.state.settings = settings
     app.include_router(create_router(settings))
+    app.include_router(create_course_router(settings))
     tutor_slots = asyncio.Semaphore(1)
     vision_slots = asyncio.Semaphore(1)
 
@@ -246,6 +249,8 @@ def create_app(settings: Settings | None = None):
                 relevant_type=next((t for t in student_profile["question_types"] if t["id"]==template_type_id(q)),None)
                 summary["question_type"]={k:relevant_type[k] for k in ("name","attempts","mastery","status")} if relevant_type else None
                 summary["difficulty"]=q["difficulty"]
+            with connect(settings.database_path) as db:
+                q["course_context"] = courses.context(db, "math", q)
             result = await respond(settings, q, body.message, summary, previous, submitted=row["status"] == "submitted")
             with connect(settings.database_path) as db:
                 db.execute("INSERT INTO tutor_messages(attempt_id,user_message,response,created_at) VALUES(?,?,?,?)",

@@ -19,6 +19,11 @@ const bankState = {
   reviewDraft: null,
   messages: [],
   busy: false,
+  course: null,
+  courseReport: null,
+  course_book_id: "",
+  course_unit_id: "",
+  limitCourse: true,
 };
 const bankVerdicts = {
   correct: "正确",
@@ -40,9 +45,15 @@ function bankSelection() {
     difficulty: bankState.difficulty ? Number(bankState.difficulty) : null,
     answer_mode: bankState.answer_mode || null,
     allow_challenge: state.allowChallenge,
+    course_book_id: bankState.limitCourse ? bankState.course_book_id || null : null,
+    course_unit_id: bankState.limitCourse ? bankState.course_unit_id || null : null,
   };
 }
 async function loadBank() {
+  const course = await api("/courses?" + new URLSearchParams({subject: bankState.subject}));
+  bankState.course = course;
+  bankState.course_book_id = course.setting.book_id;
+  bankState.course_unit_id = course.setting.unit_id || "";
   const filters = new URLSearchParams({
     subject: bankState.subject,
     stage: bankState.stage,
@@ -51,7 +62,11 @@ async function loadBank() {
   });
   for (const field of ["tag_id", "difficulty", "answer_mode"])
     if (bankState[field]) filters.set(field, bankState[field]);
-  const [catalog, tags, results, profile] = await Promise.all([
+  if (bankState.limitCourse) {
+    filters.set("course_book_id", bankState.course_book_id);
+    if (bankState.course_unit_id) filters.set("course_unit_id", bankState.course_unit_id);
+  }
+  const [catalog, tags, results, profile, courseReport] = await Promise.all([
     api("/bank/catalog"),
     api(
       "/bank/tags?" +
@@ -69,8 +84,9 @@ async function loadBank() {
           stage: bankState.stage,
         }),
     ),
+    api("/courses/report?" + new URLSearchParams({subject: bankState.subject})),
   ]);
-  Object.assign(bankState, { catalog, tags: tags.items, results, profile });
+  Object.assign(bankState, { catalog, tags: tags.items, results, profile, courseReport });
 }
 async function bankRefresh() {
   try {
@@ -140,6 +156,73 @@ function bankFilter(label, field, options) {
   input.value = bankState[field];
   return el("label", { class: "bank-filter" }, el("span", {}, label), input);
 }
+
+async function bankCourseChange(bookId, unitId = "") {
+  try {
+    await api("/courses/setting", {subject: bankState.subject, book_id: bookId, unit_id: unitId || null});
+    bankState.tag_id = "";
+    bankState.offset = 0;
+    await bankRefresh();
+    return true;
+  } catch (e) { toast(e.message); return false; }
+}
+
+function bankCoursePanel() {
+  const report = bankState.courseReport, catalog = bankState.course;
+  if (!report || !catalog) return null;
+  const book = report.book, summary = report.summary;
+  const termName = (b) => `${b.grade} 年级 · ${b.term === 1 ? "上学期" : "下学期"}`;
+  const stageSelect = el("select", {
+    "aria-label": "学习阶段",
+    onChange: (e) => bankCourseChange(e.target.value),
+  }, catalog.books.map((b) => el("option", {value: b.id}, termName(b))));
+  stageSelect.value = book.id;
+  const unitSelect = el("select", {
+    "aria-label": "当前学习单元",
+    onChange: (e) => bankCourseChange(book.id, e.target.value),
+  }, el("option", {value: ""}, "整册 / 本学期"),
+  book.units.map((u) => el("option", {value: u.id}, u.name)));
+  unitSelect.value = report.unit_id || "";
+  return el("section", {class: "panel course-panel", id: "course-targets"},
+    el("div", {class: "section-title"}, el("h2", {}, "这个阶段，需要会什么"),
+      el("span", {class: "tag"}, bankSubject())),
+    el("div", {class: "course-selects"},
+      el("label", {class: "bank-filter"}, el("span", {}, "学习阶段"), stageSelect),
+      el("label", {class: "bank-filter"}, el("span", {}, "当前学习单元"), unitSelect)),
+    el("label", {class: "course-limit"}, el("input", {
+      type: "checkbox", checked: bankState.limitCourse,
+      onChange: async (e) => { bankState.limitCourse = e.target.checked; bankState.offset = 0; await bankRefresh(); },
+    }), "仅练当前学习范围"),
+    el("p", {class: "course-edition"}, book.edition),
+    el("p", {class: "note"}, book.scope_note),
+    el("div", {class: "course-summary"},
+      el("span", {}, `${summary.total} 项目标`),
+      el("span", {}, `${summary.diagnosed} 项已有练习证据`),
+      el("span", {}, `${summary.unassessed} 项待诊断`),
+      el("span", {}, `${summary.no_questions} 项待补题`)),
+    book.units.filter((u) => !report.unit_id || report.unit_id === u.id).map((u, index) => {
+      const goals = report.goals.filter((g) => g.unit_id === u.id);
+      return el("details", {class: "course-unit", open: Boolean(report.unit_id) || index === 0},
+        el("summary", {}, `${u.name} · ${goals.length} 项目标`),
+        goals.map((g) => el("article", {class: "course-goal"},
+          el("div", {class: "course-goal-title"}, el("h3", {}, g.name), el("span", {class: "tag"}, g.status)),
+          el("p", {}, g.can_do),
+          el("p", {class: "course-check"}, "怎样检查：", g.checks.join("；")),
+          g.prerequisites.length ? el("p", {class: "note"}, "前置知识：", g.prerequisites.join("、")) : null,
+          el("p", {class: "note"}, `${g.attempts} 道有效作答 · ${g.type_count} 类题型 · ${g.question_count} 道候选题`,
+            g.practical ? " · 实际操作表现需另行观察" : ""),
+          g.question_count === 0 ? el("p", {class: "course-missing"}, "这个目标还缺候选练习，保留为待补题，不据此判断你不会。") : null)),
+        !report.unit_id ? button("练这个单元", async () => {if (!await bankCourseChange(book.id, u.id)) return; bankState.limitCourse = true; await bankRefresh(); await bankStart();}, "light") : null);
+    }),
+    el("p", {class: "note"}, report.note),
+    el("details", {class: "course-sources"}, el("summary", {}, "整个初中阶段的能力方向"),
+      book.stage_outcomes.map((text) => el("p", {}, text)),
+      el("p", {class: "note"}, "这些方向贯穿学段，不能当作当前学期已经学会的前提。")),
+    el("details", {class: "course-sources"}, el("summary", {}, "课程依据"),
+      book.sources.map((s) => el("p", {}, el("a", {href: s.url, target: "_blank", rel: "noopener noreferrer"}, s.title))),
+      el("p", {class: "note"}, "学习目标由项目整理，体音美不在范围内。")));
+}
+
 function bankView() {
   if (!bankState.catalog)
     return el("div", { class: "empty" }, "正在加载全科题库…");
@@ -216,7 +299,9 @@ function bankView() {
     el(
       "p",
       { class: "note" },
-      "当前为初中全学段。先选择科目和知识点；没有标注年级的题暂不限定为七上。",
+      bankState.limitCourse
+        ? "按当前课程目标筛选候选题；标签匹配需要核对，不会改变题目的来源年级。"
+        : "正在浏览初中全学段；AI 辅导仍会参考你设置的学习阶段。",
     ),
   );
   return el(
@@ -228,6 +313,7 @@ function bankView() {
       "初中 · 全科",
     ),
     filters,
+    bankCoursePanel(),
     bankState.attempt ? bankWorkspace() : null,
     bankProfilePanel(profile),
     el(

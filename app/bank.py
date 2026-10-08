@@ -28,6 +28,8 @@ class Selection(BaseModel):
     source_id: str | None = Field(default=None, max_length=50)
     question_id: str | None = Field(default=None, max_length=160)
     allow_challenge: bool = False
+    course_book_id: str | None = Field(default=None, max_length=80)
+    course_unit_id: str | None = Field(default=None, max_length=100)
 
 
 def normalized(value):
@@ -47,6 +49,7 @@ def import_records(db, dataset, records, manifest):
     db.execute("BEGIN IMMEDIATE")
     db.execute("INSERT INTO bank_sources VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET manifest=excluded.manifest,imported_at=excluded.imported_at", (dataset, dumps(manifest), now()))
     counts = {"read": 0, "inserted": 0, "duplicates": 0, "ready": 0, "reference": 0, "quarantine": 0}
+    inserted_ids = []
     for raw in records:
         q = dict(raw)
         counts["read"] += 1
@@ -92,7 +95,10 @@ def import_records(db, dataset, records, manifest):
                    (q["id"], dataset, q["subject"], q["stage"], q["kind"], q["status"], q["difficulty"], digest, dumps(q), now()))
         db.executemany("INSERT OR IGNORE INTO bank_question_tags VALUES(?,?)", [(q["id"], tag["id"]) for tag in tags])
         counts["inserted"] += 1
+        inserted_ids.append(q["id"])
         counts[q["status"]] += 1
+    from app.courses import sync_questions
+    sync_questions(db, inserted_ids)
     audit(db, "bank_import", {"dataset": dataset, **counts, "manifest": manifest})
     return counts
 
@@ -118,6 +124,14 @@ def clauses(selection, playable=False):
         raise HTTPException(422, "请选择已有学科与学段")
     where = ["q.subject=?", "q.stage=?", "q.status NOT IN ('quarantine','superseded')"]
     args = [selection.subject, selection.stage]
+    from app.courses import validate_scope, scope_goals, VERSION as COURSE_VERSION
+    validate_scope(selection.subject, selection.course_book_id, selection.course_unit_id)
+    if selection.course_book_id:
+        if selection.stage != "junior":
+            raise HTTPException(422, "当前课程目标仅覆盖初中")
+        ids = [g["id"] for g in scope_goals(selection.course_book_id, selection.course_unit_id)]
+        where.append("EXISTS (SELECT 1 FROM course_question_links cl WHERE cl.question_id=q.id AND cl.version=? AND cl.goal_id IN (" + ",".join("?" for _ in ids) + "))")
+        args += [COURSE_VERSION, *ids]
     if playable:
         where.append("json_extract(q.data,'$.can_practice')=1")
     if selection.tag_id:

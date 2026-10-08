@@ -39,7 +39,7 @@ def initialize(path: Path):
     with connect(path) as db:
         db.execute("PRAGMA journal_mode = WAL")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version > 4:
+        if version > 5:
             raise RuntimeError("数据库版本高于应用支持版本，拒绝降级打开。")
         if version == 0:
             db.executescript("""
@@ -143,6 +143,21 @@ def initialize(path: Path):
                 PRAGMA user_version=4;
                 COMMIT;
             """)
+        if version < 5:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE course_settings(
+                    student_id TEXT NOT NULL REFERENCES students(id),subject TEXT NOT NULL,data TEXT NOT NULL,
+                    PRIMARY KEY(student_id,subject));
+                CREATE TABLE course_question_links(
+                    question_id TEXT NOT NULL REFERENCES bank_questions(id),goal_id TEXT NOT NULL,
+                    version TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(question_id,goal_id));
+                CREATE INDEX course_goal_questions ON course_question_links(goal_id,question_id);
+                CREATE TABLE course_mapping_state(
+                    question_id TEXT PRIMARY KEY REFERENCES bank_questions(id),signature TEXT NOT NULL);
+                PRAGMA user_version=5;
+                COMMIT;
+            """)
         db.execute("BEGIN IMMEDIATE")
         for node in NODES:
             db.execute("INSERT INTO knowledge VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
@@ -153,6 +168,8 @@ def initialize(path: Path):
         ensure_templates(db)
         audit(db, "curriculum_sync", {"version": VERSION, "nodes": len(NODES)})
         replenish(db)
+        from app.courses import sync_questions
+        sync_questions(db)
 
 
 def replenish(db, minimum: int = 6) -> int:
