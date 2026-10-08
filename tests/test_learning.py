@@ -15,7 +15,7 @@ from app.questions import grade, make_question, parse_number, validate_question
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(database_path=tmp_path / "test.sqlite3", deepseek_api_key="", _env_file=None)
+    return Settings(auth_required=False, database_path=tmp_path / "test.sqlite3", deepseek_api_key="", _env_file=None)
 
 
 @pytest.fixture
@@ -160,7 +160,7 @@ def test_deepseek_contract_and_context_minimization(settings, monkeypatch):
         url,kwargs=requests[0]
         assert url == "https://api.deepseek.com/chat/completions"
         assert kwargs["headers"]["Authorization"] == "Bearer test-key-not-real"
-        context=kwargs["json"]["messages"][0]["content"]
+        context=kwargs["json"]["messages"][1]["content"]
         assert "reference_solution" not in context and "nickname" not in context
         assert "test-key-not-real" not in c.get("/api/v1/health").text
 

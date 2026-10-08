@@ -4,7 +4,10 @@
 目标和检查表现由项目改写，不存储教材正文、课文或课标原文。
 """
 
-VERSION = "junior-2026.10.2"
+import json
+from pathlib import Path
+
+VERSION = "junior-2026.10.3"
 MOE = "https://www.moe.gov.cn/srcsite/A26/s8001/202204/"
 PEP = "https://jc.pep.com.cn/"
 STANDARD_FILES = {
@@ -350,6 +353,28 @@ INFO = [
 ]
 for grade, term, rows in INFO:
     rows_book("information", grade, term, rows)
+
+# 本地PDF目录核对与课程进度分开记录，收到文件不会自动认证教学目标。
+# 原有单元/目标ID保持稳定，已有作答证据和学习设置仍指向原目标。
+TEXTBOOK_REVIEWS = json.loads((Path(__file__).parent / "data/textbook_reviews.json").read_text())["books"]
+for review in TEXTBOOK_REVIEWS:
+    current = next(b for b in BOOKS if b["id"] == review["scope_id"])
+    summary = {key: review[key] for key in ("sha256", "pages", "approval_year", "edition_year", "checked_date", "alignment", "chapters", "note")}
+    current["textbook_review"] = summary
+    if review["alignment"] == "active_chapters_match":
+        current.update(basis="pep_toc_verified", edition=f"人教版 · {review['approval_year']}审定 · 用户提供PDF目录已核对",
+                       scope_note="该PDF章节主题及顺序已核对；版次年份未确认。目标由项目编写，未认证全部细目、习题和实践覆盖。")
+        for chapter, item in zip(review["chapters"], current["units"], strict=True):
+            if chapter["unit_id"] != item["id"]:
+                raise ValueError("教材目录与课程单元ID不一致")
+            item["textbook_chapter"] = chapter
+        for source in current["sources"]:
+            if source["role"] == "toc":
+                source["role"] = "book_reference"
+        current["sources"].append({"title": "用户提供的本地PDF：目录已核对，版次年份未确认",
+                                   "role": "toc", "sha256": review["sha256"], "url": None})
+    else:
+        current["scope_note"] += " 已收到另一章节安排的九下PDF（含反比例函数），作为版本参考保存，当前学习范围尚未切换。"
 
 BOOK_MAP = {b["id"]: b for b in BOOKS}
 UNITS = {u["id"]: u for b in BOOKS for u in b["units"]}

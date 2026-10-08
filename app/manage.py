@@ -17,7 +17,8 @@ def main():
     parser.add_argument("--stage", choices=["junior", "primary", "senior", "unknown", "all"], default="junior")
     args = parser.parse_args()
     settings = Settings()
-    initialize(settings.database_path)
+    if args.command != "backup":
+        initialize(settings.database_path)
     if args.command == "import-bank":
         from app.bank import import_records
         from app.datasets import iter_dataset, source_manifest
@@ -35,6 +36,7 @@ def main():
         destination.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(settings.database_path) as source, sqlite3.connect(destination) as target:
             source.backup(target)
+        destination.chmod(0o600)
         print(f"备份已保存：{destination.resolve()}")
         assets = settings.database_path.parent / "imports"
         if assets.exists():
@@ -46,6 +48,11 @@ def main():
             answer_destination=destination.with_suffix(".answers")
             shutil.copytree(answers,answer_destination)
             print(f"主观解答备份：{answer_destination.resolve()}")
+        teacher_images = settings.database_path.parent / "teacher_images"
+        if teacher_images.exists():
+            teacher_destination = destination.with_suffix(".teacher-images")
+            shutil.copytree(teacher_images, teacher_destination)
+            print(f"答疑照片备份：{teacher_destination.resolve()}")
     else:
         with connect(settings.database_path) as db:
             if args.command == "sync":

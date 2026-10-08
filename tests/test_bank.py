@@ -24,7 +24,7 @@ def record(id="choice", subject="math", kind="single_choice", **overrides):
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(database_path=tmp_path/"test.sqlite3", deepseek_api_key="test-only", _env_file=None)
+    return Settings(auth_required=False, database_path=tmp_path/"test.sqlite3", deepseek_api_key="test-only", _env_file=None)
 
 
 @pytest.fixture
@@ -124,7 +124,7 @@ def test_written_photo_assessment_requires_review_and_preserves_tags(client, set
     assert response.status_code == 200, response.text
     review = response.json()
     assert review["status"] == "review" and captured[0][1]
-    assert captured[0][0][1]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert captured[0][0][-1]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     assert client.get("/api/v1/bank/profile?subject=chinese").json()["completed"] == 0
     assert client.get(url+"/pages/"+review["files"][0]).headers["content-type"] == "image/jpeg"
     body = {"review_id": review["id"], "reviewed": False, "verdict": "correct", "transcribed_answer": "我的完整解答"}

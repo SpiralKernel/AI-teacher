@@ -4,6 +4,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from app.curriculum import NODE_MAP
+from app import ai_policy
 
 
 class TutorContent(BaseModel):
@@ -40,9 +41,8 @@ async def respond(settings, q, message, student_state, previous, submitted=False
         "掌握度只是证据估计，不给学生贴能力标签。不假装拥有教材原文或教师审定。"
         "遵循给定课程阶段目标和前置知识；待诊断不等于不会，不能把后续学期内容当作已学前提。"
         '只输出 JSON 对象，格式为 {"reply":"一段解释","check_question":"一个检查问题"}。\n'
-        + json.dumps(context, ensure_ascii=False)
     )
-    messages = [{"role": "system", "content": system}]
+    messages = ai_policy.messages(system,context)
     for item in previous[-4:]:
         response = json.loads(item["response"])
         messages.extend([{"role": "user", "content": item["user_message"]},

@@ -10,12 +10,12 @@ from app.db import audit, dumps, now, replenish
 from app.questions import grade, parse_number, public_question
 from app.question_types import template_type_id, type_profile
 
-STUDENT = "demo"
+from app.identity import student_id
 
 
 def profile(db) -> dict:
-    rows = {r["knowledge_id"]: dict(r) for r in db.execute("SELECT * FROM mastery WHERE student_id=?", (STUDENT,))}
-    imported = list(db.execute("SELECT e.*,i.data FROM import_evidence e JOIN import_items i ON e.item_id=i.id WHERE e.student_id=?", (STUDENT,)))
+    rows = {r["knowledge_id"]: dict(r) for r in db.execute("SELECT * FROM mastery WHERE student_id=?", (student_id(),))}
+    imported = list(db.execute("SELECT e.*,i.data FROM import_evidence e JOIN import_items i ON e.item_id=i.id WHERE e.student_id=?", (student_id(),)))
     for evidence in imported:
         ids = json.loads(evidence["knowledge_ids"])
         for key in ids:
@@ -33,7 +33,7 @@ def profile(db) -> dict:
         knowledge.append({**node, "attempts": count, "mastery": round(probability, 3) if count else None,
                           "status": status, "last_seen": state.get("last_seen"), "imported_attempts": state.get("imported_attempts", 0)})
     results = [json.loads(r["result"]) for r in db.execute(
-        "SELECT result FROM attempts WHERE student_id=? AND status='submitted'", (STUDENT,))]
+        "SELECT result FROM attempts WHERE student_id=? AND status='submitted'", (student_id(),))]
     errors = {}
     for r in results:
         if r["error"]:
@@ -44,8 +44,8 @@ def profile(db) -> dict:
             for key in json.loads(evidence["knowledge_ids"]):
                 code = "imported:" + key
                 errors.setdefault(code, {"code": code, "feedback": f"试卷核对发现：{NODE_MAP[key]['name']}需要进一步巩固", "count": 0})["count"] += 1
-    return {"student_id": STUDENT, "nickname": "学习者", "grade": 7, "term": 1,
-            "knowledge": knowledge, "question_types": type_profile(db, STUDENT), "completed": len(results) + len(imported),
+    return {"student_id": student_id(), "nickname": "学习者", "grade": 7, "term": 1,
+            "knowledge": knowledge, "question_types": type_profile(db, student_id()), "completed": len(results) + len(imported),
             "practice_completed": len(results), "imported_completed": len(imported),
             "correct": sum(r["correct"] for r in results) + sum(e["verdict"] == "correct" for e in imported),
             "weak_patterns": sorted(errors.values(), key=lambda x: -x["count"])[:6],
@@ -54,7 +54,7 @@ def profile(db) -> dict:
 
 def recommend(db):
     states = {n["id"]: n for n in profile(db)["knowledge"]}
-    external_weak = db.execute("SELECT knowledge_ids FROM import_evidence WHERE student_id=? AND verdict='incorrect' ORDER BY created_at DESC LIMIT 20", (STUDENT,))
+    external_weak = db.execute("SELECT knowledge_ids FROM import_evidence WHERE student_id=? AND verdict='incorrect' ORDER BY created_at DESC LIMIT 20", (student_id(),))
     for evidence in external_weak:
         for key in json.loads(evidence["knowledge_ids"]):
             if (states[key]["mastery"] or 0) >= .8:
@@ -80,7 +80,7 @@ def recommend(db):
 
 
 def get_attempt(db, attempt_id: str):
-    row = db.execute("SELECT * FROM attempts WHERE id=? AND student_id=?", (attempt_id, STUDENT)).fetchone()
+    row = db.execute("SELECT * FROM attempts WHERE id=? AND student_id=?", (attempt_id, student_id())).fetchone()
     if not row:
         raise HTTPException(404, "练习记录不存在")
     question = json.loads(db.execute("SELECT data FROM questions WHERE id=?", (row["question_id"],)).fetchone()[0])
@@ -92,7 +92,7 @@ def next_question(db, knowledge_id: str | None, difficulty: int | None = None, a
     reason = "你选择了专项练习。"
     if knowledge_id and knowledge_id not in NODE_MAP:
         raise HTTPException(404, "知识点不存在")
-    active = db.execute("SELECT * FROM attempts WHERE student_id=? AND status='assigned'", (STUDENT,)).fetchone()
+    active = db.execute("SELECT * FROM attempts WHERE student_id=? AND status='assigned'", (student_id(),)).fetchone()
     if active:
         row, q = get_attempt(db, active["id"])
         if (knowledge_id is None or q["knowledge_id"] == knowledge_id) and (difficulty is None or q["difficulty"]==difficulty) and (not question_type_id or template_type_id(q)==question_type_id):
@@ -105,19 +105,19 @@ def next_question(db, knowledge_id: str | None, difficulty: int | None = None, a
     selected_difficulty=(3 if question_type_id.startswith("challenge:") else None) if question_type_id else (difficulty or (3 if allow_challenge and random.random()<.15 else None))
     candidates = db.execute("""SELECT q.data FROM questions q WHERE q.knowledge_id=? ORDER BY
         (SELECT COUNT(*) FROM attempts a WHERE a.question_id=q.id AND a.student_id=?) ASC,
-        q.created_at,q.id""", (knowledge_id, STUDENT))
+        q.created_at,q.id""", (knowledge_id, student_id()))
     candidates=[json.loads(r[0]) for r in candidates]
     candidates=[q for q in candidates if (q["difficulty"]==selected_difficulty if selected_difficulty else q["difficulty"]<3) and (not question_type_id or template_type_id(q)==question_type_id)]
     if not candidates:
         raise HTTPException(404, "当前知识点或题型暂无所选难度的题目，请换一个范围")
     # 优先未做题；同一证据数量下随机选择，避免每人固定顺序。
-    counts={r["question_id"]:r["n"] for r in db.execute("SELECT question_id,COUNT(*) n FROM attempts WHERE student_id=? GROUP BY question_id",(STUDENT,))}
+    counts={r["question_id"]:r["n"] for r in db.execute("SELECT question_id,COUNT(*) n FROM attempts WHERE student_id=? GROUP BY question_id",(student_id(),))}
     least=min(counts.get(q["id"],0) for q in candidates)
     q=random.choice([q for q in candidates if counts.get(q["id"],0)==least])
     if q["difficulty"]==3:reason+=" 这一题是随机挑战变式，会单独记录题型表现。"
     attempt_id = str(uuid.uuid4())
     db.execute("INSERT INTO attempts(id,student_id,question_id,assigned_at) VALUES(?,?,?,?)",
-               (attempt_id, STUDENT, q["id"], now()))
+               (attempt_id, student_id(), q["id"], now()))
     result=public_question(q);result["type_id"]=template_type_id(q)
     return {"attempt_id": attempt_id, "question": result, "reason": reason, "hint_used": False}
 
@@ -131,12 +131,17 @@ def submit(db, attempt_id: str, answer: str):
         return json.loads(row["result"])
     if row["status"] != "assigned":
         raise HTTPException(409, "这道练习已经跳过")
+    return record_answer(db, attempt_id, q, answer, bool(row["hint_used"]))
+
+
+def record_answer(db, attempt_id, q, answer, assisted=False):
+    """调用者持有事务及作答行；诊断与普通练习共用判分、去重和证据写入。"""
     result = grade(q, answer)
-    weight = .35 if row["hint_used"] and result["correct"] else 1.0
+    weight = .35 if assisted and result["correct"] else 1.0
     # 同一道题的重复作答保留记录，但不重复增加掌握证据。
-    repeated = db.execute("SELECT 1 FROM attempts WHERE student_id=? AND question_id=? AND status='submitted' LIMIT 1",
-                          (STUDENT, q["id"])).fetchone() is not None
-    result.update(assisted=bool(row["hint_used"]), evidence_weight=0 if repeated else weight,
+    repeated = db.execute("SELECT 1 FROM attempts WHERE student_id=? AND question_id=? AND status='submitted' AND id!=? LIMIT 1",
+                          (student_id(), q["id"], attempt_id)).fetchone() is not None
+    result.update(assisted=assisted, evidence_weight=0 if repeated else weight,
                   knowledge_id=q["knowledge_id"], question_type_id=template_type_id(q), repeated_question=repeated)
     db.execute("UPDATE attempts SET status='submitted',answer=?,result=?,submitted_at=? WHERE id=?",
                (answer, dumps(result), now(), attempt_id))
@@ -144,7 +149,7 @@ def submit(db, attempt_id: str, answer: str):
         db.execute("""INSERT INTO mastery(student_id,knowledge_id,success,failure,attempts,last_seen) VALUES(?,?,?,?,1,?)
             ON CONFLICT(student_id,knowledge_id) DO UPDATE SET
             success=success+excluded.success,failure=failure+excluded.failure,attempts=attempts+1,last_seen=excluded.last_seen""",
-                   (STUDENT, q["knowledge_id"], weight if result["correct"] else 0, 0 if result["correct"] else 1, now()))
+                   (student_id(), q["knowledge_id"], weight if result["correct"] else 0, 0 if result["correct"] else 1, now()))
     audit(db, "attempt_submitted", {"attempt_id": attempt_id, "correct": result["correct"], "weight": result["evidence_weight"]})
     replenish(db)
     return result
@@ -153,6 +158,6 @@ def submit(db, attempt_id: str, answer: str):
 def history(db):
     rows = db.execute("""SELECT a.id,a.answer,a.result,a.submitted_at,q.data FROM attempts a
         JOIN questions q ON a.question_id=q.id WHERE student_id=? AND status='submitted'
-        ORDER BY submitted_at DESC LIMIT 50""", (STUDENT,))
+        ORDER BY submitted_at DESC LIMIT 50""", (student_id(),))
     return [{"attempt_id": r["id"], "answer": r["answer"], "result": json.loads(r["result"]),
              "question": public_question(json.loads(r["data"])), "submitted_at": r["submitted_at"]} for r in rows]

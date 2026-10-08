@@ -17,6 +17,7 @@ CHALLENGE_TYPES = {
     "brackets": "双重括号代入求值", "linear": "含括号与分母的一元一次方程",
     "word_equation": "两类商品与数量关系建模", "segment": "两个中点的线段综合", "angle": "角的倍数与补角建模",
 }
+COARSE_NAMES = {"未分类", "未分类题型", "无法判断", "数学", "初中数学", "数学题", "选择题", "单选题", "多选题", "计算题", "应用题"}
 
 
 def normalize_name(name):
@@ -47,12 +48,25 @@ def register_ai_type(db, item, import_id):
     if known:
         return known["id"]
     name = item.question_type_name.strip()
-    if not name or name in {"未分类", "未分类题型", "无法判断"}:
+    if not name or normalize_name(name) in COARSE_NAMES:
         return None
     normalized = normalize_name(name)
     existing = db.execute("SELECT id FROM question_types WHERE subject='math' AND grade=7 AND term=1 AND normalized_name=?", (normalized,)).fetchone()
     if existing:
         return existing["id"]
+    from app.math_catalog import TYPE_MAP, resolve_type
+    canonical = resolve_type(item.question_type_id, name)
+    if canonical:
+        for legacy_id in TYPE_MAP[canonical]["legacy_type_ids"]:
+            if db.execute("SELECT 1 FROM question_types WHERE id=?", (legacy_id,)).fetchone():
+                return legacy_id
+        target = TYPE_MAP[canonical]
+        data = {"id":canonical,"name":target["name"],"description":target["can_do"],
+                "subject":"math","grade":7,"term":1,"knowledge_ids":item.knowledge_ids,
+                "source":"catalog","needs_review":False}
+        db.execute("INSERT OR IGNORE INTO question_types VALUES(?,'math',7,1,?,?)",
+                   (canonical,normalize_name(target["name"]),json.dumps(data,ensure_ascii=False)))
+        return canonical
     type_id = "ai:" + hashlib.sha256(("math:7:1:"+normalized).encode()).hexdigest()[:20]
     data = {"id": type_id, "name": name, "description": item.question_type_description,
             "subject": "math", "grade": 7, "term": 1, "knowledge_ids": item.knowledge_ids,
@@ -63,7 +77,9 @@ def register_ai_type(db, item, import_id):
     return type_id
 
 
-def type_profile(db, student_id="demo"):
+def type_profile(db, student_id=None):
+    from app.identity import student_id as current_id
+    student_id = student_id or current_id()
     types = {r["id"]: {**json.loads(r["data"]), "attempts": 0, "correct": 0, "success": 0., "failure": 0., "last_seen": None, "challenge_attempts": 0}
              for r in db.execute("SELECT * FROM question_types ORDER BY id")}
     def add(type_id, correct, weight, timestamp, challenge=False):

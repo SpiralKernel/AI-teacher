@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from app import bank, bank_ai, courses
+from app import ai_policy, bank, bank_ai, courses
 from app.db import connect, dumps, now
 from app.materials import MAX_FILE, MAX_TOTAL
 
@@ -33,7 +33,7 @@ def create_router(settings):
     def export():
         with connect(settings.database_path) as db:
             attempts=[]
-            for row in db.execute("SELECT * FROM bank_attempts WHERE student_id='demo' AND status='submitted' ORDER BY submitted_at"):
+            for row in db.execute("SELECT * FROM bank_attempts WHERE student_id=current_student() AND status='submitted' ORDER BY submitted_at"):
                 value=dict(row)
                 value["result"]=json.loads(value["result"])
                 q=json.loads(db.execute("SELECT data FROM bank_questions WHERE id=?",(value["question_id"],)).fetchone()[0])
@@ -91,9 +91,10 @@ def create_router(settings):
             if not candidates:
                 raise HTTPException(404,"当前范围没有可选择的标签")
             course_context = courses.context(db, body.subject, book_id=body.course_book_id, unit_id=body.course_unit_id) if body.stage == "junior" else None
-        prompt="根据初中学生当前科目的有效作答证据，从给定标签目录选出下一步应练的细分知识点或题型。结合课程阶段要求与前置知识，先诊断未测目标，再补有证据的漏洞。待诊断不等于不会；缺题目标不能伪装成已掌握。少量证据只做诊断，不夸大掌握。必须返回目录中真实tag_id，不能创建标签或题目。输出JSON {tag_id:目录ID,difficulty:1到3,reason:简短中文推荐理由}。\n"+dumps({"subject":body.subject,"course_requirements":course_context,"evidence":weak,"tags":[{k:t[k] for k in ("id","kind","label")} for t in candidates.values()]})
+        prompt="根据初中学生当前科目的有效作答证据，从给定标签目录选出下一步应练的细分知识点或题型。结合课程阶段要求与前置知识，先诊断未测目标，再补有证据的漏洞。待诊断不等于不会；缺题目标不能伪装成已掌握。少量证据只做诊断，不夸大掌握。必须返回目录中真实tag_id，不能创建标签或题目。输出JSON {tag_id:目录ID,difficulty:1到3,reason:简短中文推荐理由}。"
+        context={"subject":body.subject,"course_requirements":course_context,"evidence":weak,"tags":[{k:t[k] for k in ("id","kind","label")} for t in candidates.values()]}
         async with tutor_slots:
-            choice=await bank_ai.request_json(settings,[{"role":"system","content":prompt},{"role":"user","content":"请选择下一步练习。"}],bank_ai.Plan)
+            choice=await bank_ai.request_json(settings,ai_policy.messages(prompt,context,content="请选择下一步练习。"),bank_ai.Plan)
         if choice.tag_id not in candidates:
             raise HTTPException(502,"模型选择的标签不在目录内，请重试或手动选择")
         selection=body.model_copy(update={"tag_id":choice.tag_id,"difficulty":body.difficulty or choice.difficulty})

@@ -13,7 +13,12 @@ class LearningPreferences(courses.CourseSetting):
 
 
 def get(db):
-    row = db.execute("SELECT data FROM student_preferences WHERE student_id='demo'").fetchone()
+    from app.identity import scope, book_id
+    if scope():
+        book = BOOK_MAP[book_id()]
+        return {"subject":"math","book_id":book_id(),"unit_id":None,"limit_course":True,"allow_challenge":True,
+                "scope":{"subject_name":"数学","stage_label":f"{book['grade']}年级 · {'上学期' if book['term']==1 else '下学期'}"}}
+    row = db.execute("SELECT data FROM student_preferences WHERE student_id=current_student()").fetchone()
     value = json.loads(row[0]) if row else {"subject": "math", "limit_course": True, "allow_challenge": True}
     value = {**value, **courses.get_setting(db, value["subject"])}
     book = BOOK_MAP[value["book_id"]]
@@ -27,7 +32,7 @@ def save(db, body):
     courses.validate_scope(body.subject, body.book_id, body.unit_id)
     db.execute("BEGIN IMMEDIATE")
     courses.set_setting(db, courses.CourseSetting(subject=body.subject, book_id=body.book_id, unit_id=body.unit_id))
-    db.execute("INSERT INTO student_preferences VALUES('demo',?) ON CONFLICT(student_id) DO UPDATE SET data=excluded.data",
+    db.execute("INSERT INTO student_preferences VALUES(current_student(),?) ON CONFLICT(student_id) DO UPDATE SET data=excluded.data",
                (dumps({"subject": body.subject, "limit_course": body.limit_course, "allow_challenge": body.allow_challenge}),))
     audit(db, "learning_preferences_changed", body.model_dump())
     return get(db)

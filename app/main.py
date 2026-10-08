@@ -17,7 +17,9 @@ from app import materials
 from app.question_types import template_type_id
 from app.bank_api import create_router
 from app.course_api import create_router as create_course_router
-from app import courses
+from app.math_api import create_router as create_math_router
+from app import courses, auth
+from app.identity import current, book_id, scope
 
 
 class PracticeRequest(BaseModel):
@@ -49,10 +51,18 @@ def create_app(settings: Settings | None = None):
                 db.execute("UPDATE bank_reviews SET data=? WHERE attempt_id=?",(dumps(value),row["attempt_id"]))
         yield
 
-    app = FastAPI(title="AI-teacher · 初中全科学习", version="0.4.0", lifespan=lifespan)
+    app = FastAPI(title="AI-teacher · 初中全科学习", version="0.6.0", lifespan=lifespan)
     app.state.settings = settings
+    app.include_router(auth.create_router(settings))
+    from app.study import create_router as study_router
+    app.include_router(study_router(settings))
+    from app.teacher import create_router as teacher_router
+    from app.reports import create_router as reports_router
+    app.include_router(teacher_router(settings))
+    app.include_router(reports_router(settings))
     app.include_router(create_router(settings))
     app.include_router(create_course_router(settings))
+    app.include_router(create_math_router(settings))
     tutor_slots = asyncio.Semaphore(1)
     vision_slots = asyncio.Semaphore(1)
 
@@ -62,7 +72,7 @@ def create_app(settings: Settings | None = None):
 
     @app.middleware("http")
     async def security_headers(request, call_next):
-        if (request.url.path == "/api/v1/imports" or request.url.path.endswith("/assess")) and request.method == "POST":
+        if (request.url.path == "/api/v1/imports" or request.url.path.endswith(("/assess","/photo"))) and request.method == "POST":
             try:
                 length = int(request.headers.get("content-length", "0"))
             except ValueError:
@@ -76,13 +86,39 @@ def create_app(settings: Settings | None = None):
             response.headers["Cache-Control"] = "no-store"
         return response
 
+    @app.middleware("http")
+    async def student_identity(request, call_next):
+        value = None
+        if settings.auth_required and request.url.path.startswith('/api/'):
+            if request.method not in {'GET','HEAD','OPTIONS'}:
+                origin = request.headers.get('origin')
+                if origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
+                    return JSONResponse(status_code=403,headers={"Cache-Control":"no-store"},content={'detail':'请从本站提交请求'})
+            with connect(settings.database_path) as db:
+                value = auth.identity(db,request.cookies.get(auth.COOKIE))
+            public = {'/api/v1/health','/api/v1/auth/session','/api/v1/auth/register','/api/v1/auth/login','/api/v1/auth/logout'}
+            if not value and request.url.path not in public:
+                return JSONResponse(status_code=401,content={'detail':'请先登录自己的学习账号'},headers={'Cache-Control':'no-store'})
+        token = current.set(value)
+        try:
+            path = request.url.path
+            if value:
+                # 旧诊断/百分比接口作为维护能力保留；学生统一走 study 的证据规则。
+                if path in {'/api/v1/student','/api/v1/history','/api/v1/bank/profile','/api/v1/bank/export','/api/v1/courses/report','/api/v1/bank/plan'} or path.startswith('/api/v1/math/') or path.endswith('/tutor'):
+                    return JSONResponse(status_code=403,headers={"Cache-Control":"no-store"},content={'detail':'请使用题库与 AI补强学习入口'})
+                if book_id() != 'math-7-1' and any(path.startswith('/api/v1/'+prefix) for prefix in ('practice','attempts','curriculum')):
+                    return JSONResponse(status_code=403,headers={"Cache-Control":"no-store"},content={'detail':'该旧接口仅支持七年级上册，请使用当前阶段题库'})
+            return await call_next(request)
+        finally:
+            current.reset(token)
+
     @app.get("/api/v1/health")
     def health():
         with connect(settings.database_path) as db:
             count = db.execute("SELECT COUNT(*) FROM questions").fetchone()[0]
         return {"status": "ok", "ai_configured": bool(settings.deepseek_api_key),
                 "model": settings.deepseek_model, "question_count": count,
-                "curriculum_version": VERSION, "mode": "local_single_student"}
+                "curriculum_version": VERSION, "mode": "student_accounts" if settings.auth_required else "local_single_student"}
 
     @app.post("/api/v1/imports", status_code=201)
     async def upload_material(files: list[UploadFile] = File(...), mode: str = Form("completed"),
@@ -107,7 +143,7 @@ def create_app(settings: Settings | None = None):
     @app.get("/api/v1/imports")
     def list_materials():
         with connect(settings.database_path) as db:
-            rows = db.execute("SELECT id,title,mode,status,page_count,error,created_at FROM imports WHERE student_id='demo' ORDER BY created_at DESC LIMIT 100")
+            rows = db.execute("SELECT id,title,mode,status,page_count,error,created_at FROM imports WHERE student_id=current_student() AND book_id=? ORDER BY created_at DESC LIMIT 100",(book_id(),))
             return {"items": [dict(r) for r in rows]}
 
     @app.get("/api/v1/imports/{import_id}")
@@ -187,6 +223,7 @@ def create_app(settings: Settings | None = None):
             if row["status"] == "processing":
                 raise HTTPException(409, "正在识别的材料暂不能删除，请等待完成")
             db.execute("DELETE FROM import_messages WHERE item_id IN (SELECT id FROM import_items WHERE import_id=?)", (import_id,))
+            db.execute("DELETE FROM learning_observations WHERE student_id=current_student() AND json_extract(data,'$.source') LIKE ?",("import:"+import_id+":%",))
             for table in ("import_evidence", "import_items", "import_pages", "imports"):
                 db.execute(f"DELETE FROM {table} WHERE {'id' if table == 'imports' else 'import_id'}=?", (import_id,))
             audit(db, "material_deleted", {"import_id": import_id})
@@ -204,7 +241,7 @@ def create_app(settings: Settings | None = None):
         with connect(settings.database_path) as db:
             result = profile(db)
             knowledge_id, reason = recommend(db)
-            bank_summary=[dict(r) for r in db.execute("SELECT q.subject,q.stage,COUNT(*) completed,SUM(json_extract(a.result,'$.correct')) correct FROM bank_attempts a JOIN bank_questions q ON q.id=a.question_id WHERE a.student_id='demo' AND a.status='submitted' GROUP BY q.subject,q.stage")]
+            bank_summary=[dict(r) for r in db.execute("SELECT q.subject,q.stage,COUNT(*) completed,SUM(json_extract(a.result,'$.correct')) correct FROM bank_attempts a JOIN bank_questions q ON q.id=a.question_id WHERE a.student_id=current_student() AND a.status='submitted' GROUP BY q.subject,q.stage")]
         return {**result, "recommendation": {"knowledge_id": knowledge_id, "reason": reason},"bank_summary":bank_summary,
                 "all_completed":result["completed"]+sum(s["completed"] for s in bank_summary),"all_correct":result["correct"]+sum(s["correct"] or 0 for s in bank_summary)}
 

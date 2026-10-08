@@ -24,7 +24,7 @@ def test_challenge_variants(key):
 
 
 def test_type_registry_scope_and_name_deduplication(tmp_path):
-    settings=Settings(database_path=tmp_path/"type.sqlite3",deepseek_api_key="",_env_file=None)
+    settings=Settings(auth_required=False, database_path=tmp_path/"type.sqlite3",deepseek_api_key="",_env_file=None)
     initialize(settings.database_path)
     with connect(settings.database_path) as db:
         known=register_ai_type(db,RecognizedItem(stem="题目",question_type_name="负数减负数"),"source-test")
@@ -40,7 +40,7 @@ def test_type_registry_scope_and_name_deduplication(tmp_path):
 
 
 def test_challenge_selection_and_fine_type_state(tmp_path,monkeypatch):
-    settings=Settings(database_path=tmp_path/"type.sqlite3",deepseek_api_key="",_env_file=None)
+    settings=Settings(auth_required=False, database_path=tmp_path/"type.sqlite3",deepseek_api_key="",_env_file=None)
     with TestClient(create_app(settings)) as client:
         a=client.post("/api/v1/practice/next",json={"knowledge_id":"addition","difficulty":3}).json()
         assert a["question"]["difficulty"]==3 and a["question"]["type_id"]=="challenge:addition"
@@ -58,7 +58,7 @@ def test_challenge_selection_and_fine_type_state(tmp_path,monkeypatch):
 
 
 def test_existing_attempts_backfill_type_profiles_without_regrading(tmp_path):
-    settings=Settings(database_path=tmp_path/"type.sqlite3",deepseek_api_key="",_env_file=None)
+    settings=Settings(auth_required=False, database_path=tmp_path/"type.sqlite3",deepseek_api_key="",_env_file=None)
     with TestClient(create_app(settings)) as client:
         a=client.post("/api/v1/practice/next",json={"knowledge_id":"opposite"}).json()
         with connect(settings.database_path) as db:

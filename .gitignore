@@ -1,11 +1,15 @@
 .venv/
 .env
-data/*.sqlite3*
-data/backups/
-data/imports/
-data/sources/
-data/bank_answers/
+.env.*
+!.env.example
+# Runtime data contains accounts, learning records, uploads and source caches.
+/data/
 __pycache__/
 .pytest_cache/
 *.pyc
 .DS_Store
+
+output/pdf/
+tmp/pdfs/
+
+output/evals/

@@ -144,16 +144,19 @@ function render() {
     bank: "全科题库",
     progress: "学习记录",
     settings: "设置",
+    math: "数学诊断",
   }[state.view];
   document.querySelector(".topbar > span").firstChild.textContent =
-    ["practice", "materials"].includes(state.view) ? "数学 " : (state.learning?.scope.subject_name || "初中") + " ";
+    ["practice", "materials", "math"].includes(state.view) ? "数学 " : (state.learning?.scope.subject_name || "初中") + " ";
   document.querySelector("#learning-switch").textContent = learningLabel() + " · 设置";
   document.querySelector("#learner-scope").textContent = learningLabel();
   document.querySelector("footer span").textContent =
-    state.view === "materials" ? "七上数学 / 已答试卷" : state.view === "practice" ? "七上数学 / 模板练习" : learningLabel();
+    state.view === "materials" ? "七上数学 / 已答试卷" : state.view === "practice" ? "七上数学 / 模板练习" : state.view === "math" ? "七上数学 / 题型诊断" : learningLabel();
   root.replaceChildren(
     state.view === "learn"
       ? learnView()
+      : state.view === "math"
+        ? mathView()
       : state.view === "practice"
         ? practiceView()
         : state.view === "bank"
@@ -258,6 +261,9 @@ function learnView() {
     heading("你好，今天也向前一步。", "把不懂的地方，变成下一次进步的起点。"),
     learningOverview(),
     hero,
+    el("section", {class: "learning-overview"},
+      el("div", {}, el("h2", {}, "先看看，哪些题型还需要检查"), el("p", {}, "查看七上题型覆盖，完成一次抽样诊断，再安排下一步练习。")),
+      button("打开数学诊断", openMath, "light")),
     stats(),
     el(
       "div",
@@ -885,6 +891,7 @@ async function exportData() {
 document.querySelectorAll("[data-view]").forEach((n) =>
   n.addEventListener("click", async () => {
     if (state.busy) return;
+    if (n.dataset.view === "math") { await openMath(); return; }
     if (n.dataset.view === "settings") { await openSettings(); return; }
     if (n.dataset.view === "practice" && (state.learning.book_id !== "math-7-1" || state.learning.unit_id)) {
       await openCurrentBank();

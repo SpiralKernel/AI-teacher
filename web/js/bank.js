@@ -235,7 +235,9 @@ function bankCoursePanel() {
       book.stage_outcomes.map((text) => el("p", {}, text)),
       el("p", {class: "note"}, "这些方向贯穿学段，不能当作当前学期已经学会的前提。")),
     el("details", {class: "course-sources"}, el("summary", {}, "课程依据"),
-      book.sources.map((s) => el("p", {}, el("a", {href: s.url, target: "_blank", rel: "noopener noreferrer"}, s.title))),
+      book.sources.map((s) => el("p", {}, s.url
+        ? el("a", {href: s.url, target: "_blank", rel: "noopener noreferrer"}, s.title)
+        : s.title)),
       el("p", {class: "note"}, "学习目标由项目整理，体音美不在范围内。")));
 }
 

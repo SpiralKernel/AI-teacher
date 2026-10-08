@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.course_catalog import BOOKS, BOOK_MAP, GOALS, UNITS, VERSION
 from app.db import audit, dumps, now
+from app.identity import scope, book_id as active_book
 
 
 class CourseSetting(BaseModel):
@@ -25,6 +26,8 @@ def normalize(text):
 
 
 def validate_scope(subject, book_id=None, unit_id=None):
+    if scope() and (subject != "math" or (book_id and book_id != active_book())):
+        raise HTTPException(403, "题库只开放设置中选择的数学学习阶段")
     if book_id and (book_id not in BOOK_MAP or BOOK_MAP[book_id]["subject"] != subject):
         raise HTTPException(422, "课程册次与科目不匹配")
     if unit_id and (unit_id not in UNITS or not book_id or not unit_id.startswith(book_id + ":")):
@@ -32,7 +35,8 @@ def validate_scope(subject, book_id=None, unit_id=None):
 
 
 def catalog(subject):
-    items = [b for b in BOOKS if b["subject"] == subject]
+    validate_scope(subject)
+    items = [b for b in BOOKS if b["subject"] == subject and (not scope() or b["id"] == active_book())]
     if not items:
         raise HTTPException(422, "课程科目不存在")
     return {"version": VERSION, "books": items,
@@ -41,7 +45,9 @@ def catalog(subject):
 
 def get_setting(db, subject):
     catalog(subject)
-    row = db.execute("SELECT data FROM course_settings WHERE student_id='demo' AND subject=?", (subject,)).fetchone()
+    if scope():
+        return {"subject":"math", "book_id":active_book(), "unit_id":None}
+    row = db.execute("SELECT data FROM course_settings WHERE student_id=current_student() AND subject=?", (subject,)).fetchone()
     if row:
         value = json.loads(row[0])
         if value["book_id"] in BOOK_MAP:
@@ -53,7 +59,7 @@ def get_setting(db, subject):
 def set_setting(db, body):
     validate_scope(body.subject, body.book_id, body.unit_id)
     value = body.model_dump()
-    db.execute("INSERT INTO course_settings VALUES('demo',?,?) ON CONFLICT(student_id,subject) DO UPDATE SET data=excluded.data",
+    db.execute("INSERT INTO course_settings VALUES(current_student(),?,?) ON CONFLICT(student_id,subject) DO UPDATE SET data=excluded.data",
                (body.subject, dumps(value)))
     audit(db, "course_progress_changed", value)
     return value
@@ -110,7 +116,7 @@ def evidence(db, subject):
     result = defaultdict(list)
     rows = db.execute("""SELECT l.goal_id,a.id,a.result,a.question_id,q.data FROM bank_attempts a
         JOIN bank_questions q ON q.id=a.question_id JOIN course_question_links l ON l.question_id=q.id
-        WHERE a.student_id='demo' AND a.status='submitted' AND q.subject=? AND l.version=?""", (subject, VERSION))
+        WHERE a.student_id=current_student() AND a.status='submitted' AND q.subject=? AND l.version=?""", (subject, VERSION))
     for row in rows:
         value, q = json.loads(row["result"]), json.loads(row["data"])
         if value.get("evidence_weight", 0) <= 0:
@@ -126,7 +132,7 @@ def evidence(db, subject):
         for g in GOALS.values():
             for node_id in g["legacy_ids"]:
                 targets[node_id].append(g["id"])
-        for row in db.execute("SELECT a.id,a.question_id,a.result,q.knowledge_id FROM attempts a JOIN questions q ON q.id=a.question_id WHERE student_id='demo' AND status='submitted'"):
+        for row in db.execute("SELECT a.id,a.question_id,a.result,q.knowledge_id FROM attempts a JOIN questions q ON q.id=a.question_id WHERE student_id=current_student() AND status='submitted'"):
             value = json.loads(row["result"])
             if value.get("evidence_weight", 0) <= 0:
                 continue
@@ -134,7 +140,7 @@ def evidence(db, subject):
                 result[gid].append({"id": "legacy:" + row["id"], "question_identity": row["question_id"],
                                     "correct": value["correct"], "weight": value["evidence_weight"],
                                     "types": [value.get("question_type_id", row["knowledge_id"])]})
-        for row in db.execute("SELECT item_id,fingerprint,knowledge_ids,verdict,weight FROM import_evidence WHERE student_id='demo'"):
+        for row in db.execute("SELECT item_id,fingerprint,knowledge_ids,verdict,weight FROM import_evidence WHERE student_id=current_student()"):
             for node_id in json.loads(row["knowledge_ids"]):
                 for gid in targets[node_id]:
                     result[gid].append({"id": "import:" + row["item_id"], "question_identity": row["fingerprint"],
@@ -187,6 +193,7 @@ def context(db, subject, q=None, book_id=None, unit_id=None):
     ranked = sorted(targets, key=lambda g: (g["id"] not in related_ids, g["mastery"] is not None, g["mastery"] or 0))
     return {"version": VERSION, "subject": subject, "grade": value["book"]["grade"], "term": value["book"]["term"],
             "edition": value["book"]["edition"], "basis": value["book"]["basis"], "scope_note": value["book"]["scope_note"],
+            "textbook_review": value["book"].get("textbook_review"),
             "book_id": value["book"]["id"], "unit_id": value["unit_id"], "summary": value["summary"],
             "stage_outcomes": value["book"]["stage_outcomes"],
             "goals": [{k: g[k] for k in ("id", "unit_id", "name", "can_do", "checks", "prerequisites", "practical", "status", "attempts", "question_count")}

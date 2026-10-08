@@ -22,6 +22,9 @@ def dumps(value) -> str:
 def connect(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=15)
+    from app.identity import student_id
+    owner = student_id()
+    db.create_function("current_student", 0, lambda: owner)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
     try:
@@ -37,9 +40,10 @@ def audit(db, kind: str, details: dict):
 
 def initialize(path: Path):
     with connect(path) as db:
+        path.chmod(0o600)
         db.execute("PRAGMA journal_mode = WAL")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version > 6:
+        if version > 9:
             raise RuntimeError("数据库版本高于应用支持版本，拒绝降级打开。")
         if version == 0:
             db.executescript("""
@@ -166,6 +170,68 @@ def initialize(path: Path):
                 PRAGMA user_version=6;
                 COMMIT;
             """)
+        if version < 7:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS math_diagnostics(
+                    id TEXT PRIMARY KEY,student_id TEXT NOT NULL REFERENCES students(id),
+                    book_id TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('active','completed','cancelled')),
+                    data TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+                CREATE UNIQUE INDEX IF NOT EXISTS one_active_math_diagnostic ON math_diagnostics(student_id,book_id) WHERE status='active';
+                CREATE TABLE IF NOT EXISTS math_diagnostic_items(
+                    session_id TEXT NOT NULL REFERENCES math_diagnostics(id),position INTEGER NOT NULL,
+                    type_id TEXT NOT NULL,question_id TEXT NOT NULL REFERENCES questions(id),
+                    attempt_id TEXT UNIQUE REFERENCES attempts(id),
+                    PRIMARY KEY(session_id,position),UNIQUE(session_id,question_id));
+                PRAGMA user_version=7;
+                COMMIT;
+            """)
+        if version < 8:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS accounts(
+                    username TEXT PRIMARY KEY,student_id TEXT NOT NULL UNIQUE REFERENCES students(id),
+                    salt TEXT NOT NULL,password_hash TEXT NOT NULL,created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS student_scopes(
+                    student_id TEXT PRIMARY KEY REFERENCES students(id),
+                    grade INTEGER NOT NULL CHECK(grade IN (7,8,9)),term INTEGER NOT NULL CHECK(term IN (1,2)));
+                CREATE TABLE IF NOT EXISTS auth_sessions(
+                    token_hash TEXT PRIMARY KEY,student_id TEXT NOT NULL REFERENCES students(id),expires REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS login_failures(username TEXT NOT NULL,created REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS study_messages(
+                    id INTEGER PRIMARY KEY,student_id TEXT NOT NULL REFERENCES students(id),book_id TEXT NOT NULL,
+                    type_id TEXT NOT NULL,message TEXT NOT NULL,response TEXT NOT NULL,created_at TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS study_owner ON study_messages(student_id,book_id,type_id,id);
+                PRAGMA user_version=8;
+                COMMIT;
+            """)
+        if version < 9:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS teacher_threads(
+                    id TEXT PRIMARY KEY,student_id TEXT NOT NULL REFERENCES students(id),book_id TEXT NOT NULL,
+                    title TEXT NOT NULL,context TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS teacher_messages(
+                    id TEXT PRIMARY KEY,thread_id TEXT NOT NULL REFERENCES teacher_threads(id),
+                    request_id TEXT NOT NULL,message TEXT NOT NULL,response TEXT NOT NULL,created_at TEXT NOT NULL,
+                    UNIQUE(thread_id,request_id));
+                CREATE TABLE IF NOT EXISTS learning_observations(
+                    id TEXT PRIMARY KEY,student_id TEXT NOT NULL REFERENCES students(id),book_id TEXT NOT NULL,
+                    type_id TEXT NOT NULL,message_id TEXT REFERENCES teacher_messages(id),
+                    data TEXT NOT NULL,dismissed INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS observation_owner ON learning_observations(student_id,book_id,type_id,created_at);
+                CREATE TABLE IF NOT EXISTS parent_reports(
+                    student_id TEXT NOT NULL REFERENCES students(id),book_id TEXT NOT NULL,period TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,
+                    PRIMARY KEY(student_id,book_id,period));
+                CREATE INDEX IF NOT EXISTS teacher_owner ON teacher_threads(student_id,book_id,updated_at);
+                PRAGMA user_version=9;
+                COMMIT;
+            """)
+        columns={r[1] for r in db.execute('PRAGMA table_info(imports)')}
+        if 'book_id' not in columns:
+            db.execute("ALTER TABLE imports ADD COLUMN book_id TEXT NOT NULL DEFAULT 'math-7-1'")
+            db.commit()
         db.execute("BEGIN IMMEDIATE")
         for node in NODES:
             db.execute("INSERT INTO knowledge VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
@@ -185,7 +251,7 @@ def replenish(db, minimum: int = 6) -> int:
     added = 0
     for node in NODES:
         available = db.execute("""SELECT COUNT(*) FROM questions q WHERE knowledge_id=? AND json_extract(q.data,'$.difficulty')<3 AND NOT EXISTS
-            (SELECT 1 FROM attempts a WHERE a.question_id=q.id AND a.student_id='demo' AND a.status='submitted')""",
+            (SELECT 1 FROM attempts a WHERE a.question_id=q.id AND a.student_id=current_student() AND a.status='submitted')""",
                                (node["id"],)).fetchone()[0]
         needed = max(0, minimum - available)
         index = db.execute("SELECT next_index FROM seed_state WHERE knowledge_id=?", (node["id"],)).fetchone()[0]
@@ -204,7 +270,7 @@ def replenish(db, minimum: int = 6) -> int:
         db.execute("UPDATE seed_state SET next_index=? WHERE knowledge_id=?", (index, node["id"]))
         from app.challenges import make_challenge
         available = db.execute("""SELECT COUNT(*) FROM questions q WHERE knowledge_id=? AND json_extract(q.data,'$.difficulty')=3 AND NOT EXISTS
-            (SELECT 1 FROM attempts a WHERE a.question_id=q.id AND a.student_id='demo' AND a.status='submitted')""", (node["id"],)).fetchone()[0]
+            (SELECT 1 FROM attempts a WHERE a.question_id=q.id AND a.student_id=current_student() AND a.status='submitted')""", (node["id"],)).fetchone()[0]
         needed = max(0, 2-available)
         index = db.execute("SELECT next_index FROM challenge_state WHERE knowledge_id=?", (node["id"],)).fetchone()[0]
         for _ in range(100 if needed else 0):

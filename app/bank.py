@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.db import audit, dumps, now
+from app.identity import scope, book_id
 
 SUBJECTS = {
     "math": "数学", "chinese": "语文", "english": "英语", "physics": "物理",
@@ -113,6 +114,10 @@ def public(q, reveal=False):
 
 
 def catalog(db):
+    if scope():
+        where,args=clauses(Selection())
+        rows=[dict(r) for r in db.execute("SELECT q.subject,q.stage,q.status,COUNT(*) count,SUM(json_extract(q.data,'$.can_practice')) playable FROM bank_questions q WHERE "+where+" GROUP BY q.subject,q.stage,q.status",args)]
+        return {"subjects":[{"id":"math","name":"数学"}],"stages":{"junior":"初中"},"counts":rows,"sources":[]}
     rows = [dict(r) for r in db.execute("SELECT subject,stage,status,COUNT(*) count,SUM(json_extract(data,'$.can_practice')) playable FROM bank_questions WHERE status!='superseded' GROUP BY subject,stage,status")]
     return {"subjects": [{"id": key, "name": label} for key, label in SUBJECTS.items()], "stages": STAGES,
             "counts": rows, "sources": [{"id": r["id"], "manifest": json.loads(r["manifest"]), "imported_at": r["imported_at"]} for r in db.execute("SELECT * FROM bank_sources")],
@@ -120,10 +125,17 @@ def catalog(db):
 
 
 def clauses(selection, playable=False):
+    if scope():
+        if selection.subject != "math" or selection.stage != "junior" or (selection.course_book_id and selection.course_book_id != book_id()):
+            raise HTTPException(403,"题库只开放当前学习阶段")
+        selection = selection.model_copy(update={"course_book_id":book_id()})
     if selection.subject not in SUBJECTS or selection.stage not in STAGES:
         raise HTTPException(422, "请选择已有学科与学段")
     where = ["q.subject=?", "q.stage=?", "q.status NOT IN ('quarantine','superseded')"]
     args = [selection.subject, selection.stage]
+    if scope():
+        where += ["(json_extract(q.data,'$.grade') IS NULL OR json_extract(q.data,'$.grade')=?)", "(json_extract(q.data,'$.term') IS NULL OR json_extract(q.data,'$.term')=?)"]
+        args += [scope()["grade"],scope()["term"]]
     from app.courses import validate_scope, scope_goals, VERSION as COURSE_VERSION
     validate_scope(selection.subject, selection.course_book_id, selection.course_unit_id)
     if selection.course_book_id:
@@ -165,30 +177,32 @@ def search(db, selection, query="", limit=20, offset=0):
 
 
 def tags(db, subject, stage, query="", limit=100):
-    clauses(Selection(subject=subject, stage=stage))
-    rows = db.execute("""SELECT t.*,COUNT(*) question_count FROM bank_taxonomy t JOIN bank_question_tags qt ON qt.tag_id=t.id
-        JOIN bank_questions q ON q.id=qt.question_id WHERE t.subject=? AND t.stage=? AND t.label LIKE ? AND q.status NOT IN ('quarantine','superseded')
-        GROUP BY t.id ORDER BY question_count DESC,t.label LIMIT ?""", (subject, stage, "%" + query + "%", limit))
-    return {"items": [dict(r) for r in rows]}
+    where,args = clauses(Selection(subject=subject, stage=stage))
+    rows = db.execute("SELECT t.*,COUNT(*) question_count FROM bank_taxonomy t JOIN bank_question_tags qt ON qt.tag_id=t.id JOIN bank_questions q ON q.id=qt.question_id WHERE "+where+" AND t.label LIKE ? GROUP BY t.id ORDER BY question_count DESC,t.label LIMIT ?",[*args,'%'+query+'%',limit])
+    return {"items":[dict(r) for r in rows]}
 
 
 def get_attempt(db, attempt_id):
-    row = db.execute("SELECT a.*,q.data FROM bank_attempts a JOIN bank_questions q ON q.id=a.question_id WHERE a.id=? AND student_id='demo'", (attempt_id,)).fetchone()
+    row = db.execute("SELECT a.*,q.data FROM bank_attempts a JOIN bank_questions q ON q.id=a.question_id WHERE a.id=? AND student_id=current_student()", (attempt_id,)).fetchone()
     if not row:
         raise HTTPException(404, "题库作答不存在")
+    if scope():
+        where,args=clauses(Selection())
+        if not db.execute("SELECT 1 FROM bank_questions q WHERE q.id=? AND "+where,[row["question_id"],*args]).fetchone():
+            raise HTTPException(403,"该题不在当前学习阶段")
     return row, json.loads(row["data"])
 
 
 def next_question(db, selection):
     db.execute("BEGIN IMMEDIATE")
     where, args = clauses(selection, playable=True)
-    active = db.execute("SELECT id,question_id FROM bank_attempts WHERE student_id='demo' AND status='assigned'").fetchone()
+    active = db.execute("SELECT id,question_id FROM bank_attempts WHERE student_id=current_student() AND status='assigned'").fetchone()
     if active and db.execute("SELECT 1 FROM bank_questions q WHERE q.id=? AND " + where, [active["question_id"], *args]).fetchone():
         row, q = get_attempt(db, active["id"])
         review = db.execute("SELECT data FROM bank_reviews WHERE attempt_id=?", (row["id"],)).fetchone()
         return {"attempt_id": row["id"], "question": public(q), "review": json.loads(review[0]) if review else None, "resumed": True}
     # 先查可用题，空筛选不跳过学生当前作答。按最少作答次数随机。
-    candidates = list(db.execute("""SELECT q.id,q.data,(SELECT COUNT(*) FROM bank_attempts a WHERE a.question_id=q.id AND a.student_id='demo') n
+    candidates = list(db.execute("""SELECT q.id,q.data,(SELECT COUNT(*) FROM bank_attempts a WHERE a.question_id=q.id AND a.student_id=current_student()) n
         FROM bank_questions q WHERE """ + where + " ORDER BY n,RANDOM() LIMIT 1000", args))
     if not candidates:
         raise HTTPException(404, "当前筛选没有可练习题；缺图或缺参考答案的材料仅供查阅")
@@ -198,7 +212,7 @@ def next_question(db, selection):
         candidates = scoped or candidates
     # 优先学生证据中薄弱的精细标签，避免只按学科粗分类。
     weak = db.execute("""SELECT qt.tag_id FROM bank_attempts a JOIN bank_question_tags qt ON qt.question_id=a.question_id
-        JOIN bank_questions q ON q.id=a.question_id WHERE a.student_id='demo' AND a.status='submitted'
+        JOIN bank_questions q ON q.id=a.question_id WHERE a.student_id=current_student() AND a.status='submitted'
         AND q.subject=? AND q.stage=? AND json_extract(a.result,'$.evidence_weight')>0
         AND json_extract(a.result,'$.correct')=0 ORDER BY a.submitted_at DESC LIMIT 30""", (selection.subject, selection.stage)).fetchall()
     weak_ids = {r[0] for r in weak}
@@ -210,7 +224,7 @@ def next_question(db, selection):
     if active:
         db.execute("UPDATE bank_attempts SET status='skipped' WHERE id=?", (active["id"],))
     attempt_id = str(uuid.uuid4())
-    db.execute("INSERT INTO bank_attempts(id,student_id,question_id,status,created_at) VALUES(?,'demo',?,'assigned',?)", (attempt_id, selected["id"], now()))
+    db.execute("INSERT INTO bank_attempts(id,student_id,question_id,status,created_at) VALUES(?,current_student(),?,'assigned',?)", (attempt_id, selected["id"], now()))
     return {"attempt_id": attempt_id, "question": public(json.loads(selected["data"])), "review": None, "resumed": False}
 
 
@@ -228,7 +242,7 @@ def canonical_choice(value, q):
 def finish(db, row, q, answer, verdict, base_weight, explanation=None):
     if row["status"] != "assigned":
         raise HTTPException(409, "这道作答已完成或已切换")
-    repeated = db.execute("SELECT 1 FROM bank_attempts WHERE student_id='demo' AND question_id=? AND status='submitted' AND json_extract(result,'$.evidence_weight')>0", (q["id"],)).fetchone()
+    repeated = db.execute("SELECT 1 FROM bank_attempts WHERE student_id=current_student() AND question_id=? AND status='submitted' AND json_extract(result,'$.evidence_weight')>0", (q["id"],)).fetchone()
     weight = 0 if repeated or verdict not in {"correct", "incorrect"} else base_weight * (.35 if row["assisted"] and verdict == "correct" else 1)
     result = {"correct": verdict == "correct", "verdict": verdict, "answer": q["answer"], "steps": q["steps"],
               "evidence_weight": weight, "assisted": bool(row["assisted"]), "repeated": bool(repeated), "explanation": explanation,
@@ -255,7 +269,7 @@ def answer_choice(db, attempt_id, value):
 def profile(db, subject="math", stage="junior"):
     clauses(Selection(subject=subject, stage=stage))
     rows = list(db.execute("""SELECT a.*,q.data FROM bank_attempts a JOIN bank_questions q ON a.question_id=q.id
-        WHERE a.student_id='demo' AND q.subject=? AND q.stage=? AND a.status='submitted' ORDER BY a.submitted_at DESC""", (subject, stage)))
+        WHERE a.student_id=current_student() AND q.subject=? AND q.stage=? AND a.status='submitted' ORDER BY a.submitted_at DESC""", (subject, stage)))
     states = {}
     history = []
     for row in rows:

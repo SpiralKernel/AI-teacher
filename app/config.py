@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT / ".env", extra="ignore")
+    auth_required: bool = True
     database_path: Path = ROOT / "data/ai-teacher.sqlite3"
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"

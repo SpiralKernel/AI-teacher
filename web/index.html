@@ -1,76 +1,18 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
-    <meta charset="UTF-8" />
+    <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#173e35" />
-    <meta
-      name="description"
-      content="AI-teacher，初中全科学习伙伴。选择学习阶段，一步一步理解，每次练习都有迹可循。"
-    />
-    <title>AI-teacher · 初中学习伙伴</title>
-    <link rel="icon" href="/static/assets/icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/css/style.css" />
+    <meta name="theme-color" content="#E4A28F" />
+    <title>AI-teacher · 一步一步学会</title>
     <link rel="stylesheet" href="/static/vendor/katex/katex.min.css" />
-    <script src="/static/vendor/katex/katex.min.js" defer></script>
-    <script
-      src="/static/vendor/katex/contrib/auto-render.min.js"
-      defer
-    ></script>
-    <script src="/static/js/bank.js" defer></script>
-    <script src="/static/js/materials.js" defer></script>
-    <script src="/static/js/settings.js" defer></script>
-    <script src="/static/js/app.js" defer></script>
+    <link rel="stylesheet" href="/static/css/student.css" />
+    <script defer src="/static/vendor/katex/katex.min.js"></script>
+    <script defer src="/static/vendor/katex/contrib/auto-render.min.js"></script>
+    <script type="module" src="/static/js/student.js"></script>
   </head>
   <body>
-    <aside class="sidebar">
-      <a class="brand" href="/" aria-label="AI-teacher 首页"
-        ><img src="/static/assets/icon.svg" width="42" height="42" alt="" /><span
-          >AI-teacher<small>你的初中学习伙伴</small></span
-        ></a
-      >
-      <div class="course-label">我的学习空间</div>
-      <nav aria-label="主导航">
-        <button class="nav-item active" data-view="learn">
-          <span aria-hidden="true">▦</span>学习地图
-        </button>
-        <button class="nav-item" data-view="practice">
-          <span aria-hidden="true">✎</span>开始练习
-        </button>
-        <button class="nav-item" data-view="bank">
-          <span aria-hidden="true">▤</span>全科题库
-        </button>
-        <button class="nav-item" data-view="materials">
-          <span aria-hidden="true">▧</span>拍照与试卷
-        </button>
-        <button class="nav-item" data-view="progress">
-          <span aria-hidden="true">◷</span>学习记录
-        </button>
-        <button class="nav-item" data-view="settings">
-          <span aria-hidden="true">⚙</span>设置
-        </button>
-      </nav>
-      <div class="sidebar-bottom">
-        <span class="seed-icon">✦</span>
-        <p>理解，比答对更重要。<br /><small>每天一点，慢慢走远。</small></p>
-        <div class="learner">
-          <span class="avatar">学</span>
-          <div>学习者<small id="learner-scope">正在加载学习设置</small></div>
-        </div>
-      </div>
-    </aside>
-    <main>
-      <header class="topbar">
-        <span
-          >数学 <span class="slash">/</span>
-          <strong id="page-title">学习地图</strong></span
-        ><button id="learning-switch" class="learning-switch" type="button" aria-label="切换科目和学习阶段">选择科目和阶段 · 设置</button>
-      </header>
-      <div id="app" aria-live="polite">
-        <div class="empty">正在准备你的学习空间…</div>
-      </div>
-      <footer>AI-teacher · 从理解开始 <span>七年级上册 / 起步版</span></footer>
-    </main>
-    <div id="toast" role="alert" hidden></div>
+    <div id="root"><p class="loading">正在打开你的学习空间…</p></div>
+    <div id="notice" role="alert" hidden></div>
   </body>
 </html>

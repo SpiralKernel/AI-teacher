@@ -1,82 +1,68 @@
 # 架构与扩展边界
 
+当前学生入口为 AI老师、题库，顶部提供报告与学习设置。教材阶段要求供后台使用，当前界面聚焦数学。
+
 ```mermaid
 flowchart LR
-    UI[浏览器 / 后续安卓客户端] --> API[FastAPI /api/v1]
-    API --> Learning[判分、掌握证据、推荐]
-    Learning --> DB[(SQLite)]
-    Seed[课程目标与原创模板] --> Verify[独立数学校验]
-    Verify --> DB
-    API --> Tutor[辅导适配层]
-    DB --> Tutor
-    Tutor --> DeepSeek[DeepSeek API]
-    Tutor --> Rules[规则提示降级]
-    API --> Materials[图片/PDF 导入与预览]
-    Materials --> Vision[DeepSeek 图片识别]
-    Vision --> Registry[复用或新建题型]
-    Registry --> DB
-    Vision --> Review[逐题核对与确认]
-    Review --> DB
+    UI["账号与年级学期"] --> Teacher["AI老师 / 即时求助"]
+    UI --> Bank["题库练习"]
+    Teacher --> Notes["原话依据 / 题型学习线索"]
+    Import["习题图片或PDF / 逐题核对"] --> Notes
+    Bank --> Evidence["不同独立核验题 / 练习状态"]
+    Goals["教材核对目录 / 阶段要求"] --> Teacher
+    Goals --> Bank
+    Notes --> Teacher
+    Notes --> Report["家长报告 / AI分析 / PDF"]
+    Evidence --> Report
+    Evidence --> Teacher
 ```
 
-## 数据流
+## 当前模块
 
-1. 开始练习：创建服务端 attempt UUID，返回题干及来源元数据，不返回答案、错答规则或解析。重复开始恢复当前未提交题；切换专项时旧题标记为跳过。
-2. 提示或对话：先将当前练习标记为辅助作答。DeepSeek 仅获得当前学习目标、题干和摘要；响应必须通过结构校验。辅导输出仅是文字，不具有数据库操作能力。
-3. 提交：在 `BEGIN IMMEDIATE` 事务中精确比较数值，写入记录、掌握证据及审计事件，并补足模板题。网络重试同一答案直接返回原结果；修改已提交答案返回 409。
-4. 掌握证据：默认 Beta(1,1) 先验。独立正确加 1 个成功证据；提示正确加 0.35；错误加 1 个失败证据。展示均值为 `(1+success)/(2+success+failure)`。少量证据不输出强判断，重复题不重复计入。
-5. 推荐：根据前置知识、该知识点证据与距离上次作答的天数排序；可以手动专项覆盖推荐。此规则是初版启发式，需要后续评价校准。
-6. 题型画像：历史模板题按快照推导细分类别；导入题由 AI 对照目录分类，遇到新类型自动注册为尚未诊断。有效作答按类型聚合证据，并把相应类型摘要提供给辅导。类型名仅做 Unicode/空白规范化去重，尚无语义合并。
-7. 难度：预置 12 类挑战模板，每知识点保留 2 道未做挑战题；默认前端自动练习有 15% 概率选择挑战。可固定难度或关闭穿插；专项题型优先于随机难度。
-8. 材料：检验实际文件字节，图片去元数据并归一化为 JPEG；PDF 通过 Poppler 限页渲染。用户预览后才触发识别；后台任务限制并发，重启中断的任务变为可重试失败。
-9. 核对：AI 识别结果与评分建议不更新掌握度。用户逐题确认后，明确计入且答案/知识点完整的对错题产生 0.5 权重证据；核对前求助后的正确证据为 0.175。知识点按最多 3 项平分权重，题型保留整题权重。
-10. 删除与导出：删除材料事务撤销其证据；画像实时从剩余证据计算。JSON 导出包括确认材料但不含图片；完整备份需要数据库和图片目录。
+`auth.py`、`identity.py`管理账号、会话、学生和阶段；`main.py`统一认证、同源校验及路由。每个SQLite连接捕获当前学生并注册 `current_student()`，查询同时限定归属和册次。
 
-## 数据表
+`study.py`分配练习、汇总可靠题型证据。七上原创题按独立数学规则核验；来源题只有明确教师审核且评分依据可信时才进入独立证据。按内容哈希去重，排除辅助作答。五题门槛用于保守诊断，不限制新答疑入口。
 
-| 表 | 用途 |
+`teacher.py`提供自由文字/照片答疑与题库即时帮助。AI只返回结构化回复及观察提议，没有数据库执行权限。`observations.py`校验原话、阶段、题型后登记学习线索，新类型待审核；用户可撤销。`ai_policy.py`集中固定规则并将学习材料放在独立user消息，`observation_guard.py`校验来源及检查ID，并对具体错误/理解另发独立复核。图片作答先经学生核对。成功求助标记辅助作答；授课失败不写部分数据，复核失败保留讲解但不更新相关状态。AI观察不改独立掌握值。
+
+`materials.py`处理图片/PDF预览、识别及逐题核对。图片重编码去EXIF；PDF限页渲染；后台识别可恢复失败。当前页面确认已答题后生成学习线索，空白和不确定题不计错，删除撤销相关线索。导入材料按学生与册次隔离。
+
+`reports.py`汇总真实作答、观察、提问与导入，报告分析引用真实同题型证据；缓存键为学生/册次/周期，指纹随证据改变。模型失败显示规则摘要。`report_pdf.py`使用ReportLab生成中文PDF，不持久保存导出副本。
+
+前端 `student.js`负责账号、设置、题库和页面壳，分别加载 `teacher.js`、`imports.js`、`report.js`。旧 `app.js` 等多面板实现保留回归参考，当前入口不加载。详见[目录说明](project-structure.md)及[学生流程](student-flow.md)。
+
+## 数据与迁移
+
+SQLite当前schema9：
+
+| 表组 | 职责 |
 | --- | --- |
-| knowledge | 有版本和来源的课程知识节点 |
-| questions | 带内容去重哈希的题目快照、解析、评分和参数 |
-| seed_state | 每个知识点下次生成参数的序号 |
-| challenge_state | 每个知识点下次生成挑战参数的序号 |
-| question_types | 学科/年级/学期范围内的题型、定义、来源与待审标记 |
-| students | 当前单个 demo 学生；后续接账号体系 |
-| attempts | 分配、跳过、提交、提示标记与评分结果 |
-| mastery | 每个学生每个知识点的成功与失败证据 |
-| tutor_messages | 本题对话历史及实际提供者 |
-| imports / import_pages | 材料状态、模式、来源与本地归一化页文件 |
-| import_items | 原始识别建议与最终核对结论 |
-| import_evidence | 已确认材料的低权重证据；学生与题干指纹唯一约束 |
-| import_messages | 拍照题逐题讨论历史 |
-| bank_sources / bank_questions | 全科来源清单、可筛选题快照与当前/归档状态 |
-| bank_taxonomy / bank_question_tags | 按学科、学段区分的知识点/细分题型及标注来源 |
-| bank_attempts / bank_reviews | 全科作答、手写照片清单、AI建议与核对后的评价 |
-| bank_messages | 全科逐题讨论记录 |
-| course_settings | 每个学生、科目保存当前册次与单元 |
-| course_question_links | 题目与阶段目标的带版本候选映射、匹配依据与待审标记 |
-| course_mapping_state | 目标版本和来源知识标签签名，支持幂等同步 |
-| student_preferences | 当前科目、是否限定课程范围、是否允许挑战题 |
-| audit_events | 课程同步、题库补充、答题与辅导事件 |
+| students / accounts / auth_sessions / student_scopes / login_failures | 身份、会话、阶段与登录限制 |
+| knowledge / questions / seed_state / challenge_state | 原数学目标、题目快照与参数补题 |
+| attempts / mastery / tutor_messages | 原数学作答及历史掌握证据 |
+| question_types | 按科目/年级/学期登记细分题型与审核状态 |
+| bank_sources / bank_questions / bank_taxonomy / bank_question_tags | 全科来源、版本题目与来源标签 |
+| bank_attempts / bank_reviews / bank_messages | 来源题作答、照片评阅与旧讨论 |
+| imports / import_pages / import_items / import_evidence / import_messages | 材料、识别核对与历史低权重证据 |
+| course_settings / course_question_links / course_mapping_state / student_preferences | 阶段设置与版本化候选映射 |
+| math_diagnostics / math_diagnostic_items / study_messages | 保留的诊断与旧门槛补强记录 |
+| teacher_threads / teacher_messages | 新自由答疑与题库即时讨论 |
+| learning_observations | 有原话来源、可撤销的学习观察 |
+| parent_reports | 按证据指纹缓存家长分析 |
+| audit_events | 同步、入库及学习事件审计 |
 
-数据库迁移使用 `PRAGMA user_version`，当前为6；1→2新增材料表，2→3新增题型与挑战序号，3→4新增全科题库和评阅表，4→5新增课程阶段与候选映射表，5→6新增学生学习偏好。历史答题保持原评分。拒绝降级打开，题型画像从证据计算，AI不能直接修改掌握值。
+版本迁移拒绝降级，保留旧题快照、答案和评分。schema8引入账号与阶段，schema9增加答疑、观察、报告和导入册次。升级前使用SQLite在线备份，并按旧列检查原记录；数据库之外还需备份 `imports/`、`bank_answers/` 和 `teacher_images/`。
 
-课程要求由 `course_catalog.py` 维护，自编目标与官方来源分开标注。启动与批量入库同步来源知识标签的候选对应，不根据题干猜年级、不改来源标签。版本或标签变化重建映射，无变化不重复写入。目标报告实时汇总原模板、确认导入和全科题的有效证据，并对同一来源题的历史快照去重；目标无证据保持未知。
+## 保留的全科与课程能力
 
-`/api/v1/courses`提供目录和设置，`/courses/setting`保存进度，`/courses/report`提供目标报告。选题携带 `course_book_id`、`course_unit_id` 时，后端以候选映射限制科目、学段和目标范围；AI不能用返回的标签绕过筛选。辅导、AI选题和主观评阅分别收到阶段要求；学生上下文不会保存到公共题目快照。学段方向不作为当前学期已学前提，实践目标不因纸笔成绩判为稳定。
+后端题库覆盖初中11科，体音美排除；学生入口当前只开放数学。来源标签直接复用，缺标提议带题干指纹；候选目标映射不能证明细分题型和答案已教师审核。缺图、缺答案与归档旧版本退出推荐，历史作答继续引用原快照。
 
-原数学地图与整卷识别仍限定 math/7/1。新增 `/api/v1/bank` 体系覆盖初中11科；来源题未标明年级/学期时保留空值。选择题按来源答案判分；主观题可上传图片，模型参照整题和分题答案逐步评阅，人工核对后产生0.5权重证据。模型选题只返回真实目录ID，后端校验科目、学段、可作答状态与难度后分配题目。
+`course_catalog.py`维护学段、册次和单元目标，自编要求与已核对教材目录分别标注。启动及批量入库幂等同步候选目标映射。教材归档、目录核对和课程导出供维护使用，不向学生展示教材阅读器。
 
-源知识点与题型不重打标签；组合题型由原字段派生。Luna补标带题干哈希。新题在评阅时若仍缺分类，模型可以提议新标签，自动登记为尚未诊断；不覆盖已有来源标签。来源变更保留历史版本，旧版本退出推荐。
+历史Beta掌握值、低权重导入证据、直接tutor/模型选题和旧诊断业务保留测试兼容；当前页面不使用旧百分比画像。提示规则、复核、故障处理与已知边界见[AI规则与评测](ai-policy.md)。当前可靠练习状态与对话学习观察分别计算。
 
-## 安卓路线
+## 安卓与后续
 
-集中设置使用`GET/POST /api/v1/courses/preferences`，与题库快捷切换共用保存逻辑。当前科目、范围限制和挑战偏好按学生保存，各科学期与单元继续独立保存在`course_settings`。设置保存事务先校验范围再写入，非法跨科/跨册请求不改变已保存设置。前端目录职责见[目录与维护入口](project-structure.md)。
+安卓可复用 `/auth`、`/study`、`/teacher`、`/imports`、`/reports` 和题库提交接口。Key只在服务端，APK不包含模型密钥。本地原型默认监听回环地址；云端部署还需HTTPS、服务端用量控制、运维和账户恢复。当前尚未制作APK。
 
-服务端持有 Key，客户端只使用后端 API；APK 中不包含 DeepSeek Key。第一阶段可用 WebView/Capacitor 复用界面验证操作流程；以后采用 Kotlin/Compose 或 Flutter，也不需要重写判分和题库服务。
-
-本地原型默认仅监听回环地址。开发安卓网络访问前，先实现认证、学生数据隔离、HTTPS 和服务端用量控制；正式部署时将单例 `demo` 替换为经过授权的用户身份，将 SQLite 迁移为 PostgreSQL。当前接口不能直接作为公开多学生服务使用。
-
-## 尚未实现
-
-完整教材映射、教师审题后台、自由生成题的发布审核、题型语义合并、新题型自动配套练习、经过大样本验证的手写过程评分、安卓安装包、用户账号、家长端和云端部署。
+后续仍需逐题教师审定、补齐核验题型、题型语义合并、更广手写样本评估、完整教材目标映射和独立家长账号权限。当前家长报告使用学生登录态查看与导出。

@@ -16,7 +16,7 @@ from app.materials import PageRecognition, normalized_image, prepare_pages, reco
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(database_path=tmp_path/"materials.sqlite3", deepseek_api_key="fake-material-test-key", _env_file=None)
+    return Settings(auth_required=False, database_path=tmp_path/"materials.sqlite3", deepseek_api_key="fake-material-test-key", _env_file=None)
 
 
 @pytest.fixture
@@ -200,7 +200,7 @@ def test_vision_payload_and_guardrails(settings,monkeypatch):
     import asyncio
     result=asyncio.run(recognize_page(settings,normalized_image(image_bytes()),"completed"))
     assert result.items[0].suggested_verdict=="uncertain" and result.items[0].knowledge_ids==["addition"]
-    blocks=captured[0]["messages"][1]["content"]
+    blocks=captured[0]["messages"][-1]["content"]
     assert blocks[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     result=asyncio.run(recognize_page(settings,normalized_image(image_bytes()),"blank"))
     assert result.items[0].student_answer=="" and result.items[0].suggested_verdict=="unanswered"

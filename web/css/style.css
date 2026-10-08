@@ -1765,3 +1765,40 @@ footer {
   .settings-current { align-items: flex-start; flex-direction: column; gap: 8px; }
   .settings-form .actions .btn { width: 100%; }
 }
+
+/* 七上题型地图与抽样诊断 */
+.math-controls { display: flex; align-items: end; gap: 20px; flex-wrap: wrap; margin: 24px 0 16px; }
+.math-controls label { display: flex; flex-direction: column; gap: 10px; font-size: 13px; flex: 1; min-width: 220px; }
+.math-controls select, .math-intro select, .math-session input, .section-title > select { font: inherit; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: var(--paper); padding: 12px; min-width: 0; }
+.math-counts { display: flex; gap: 12px 24px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 18px; margin-top: 20px; font-size: 13px; }
+.math-session { margin: 24px 0; }
+.math-session .section-title { margin-top: 0; }
+.math-progress { width: 100%; height: 9px; accent-color: var(--green); }
+.math-diagnostic-form { max-width: 720px; margin-top: 26px; display: flex; flex-direction: column; align-items: flex-start; gap: 16px; }
+.math-diagnostic-form input { width: 100%; box-sizing: border-box; font-size: 20px; }
+.math-question { font-size: 24px; line-height: 1.8; margin: 14px 0; overflow-wrap: anywhere; }
+.math-feedback { background: var(--paper); padding: 22px; border-radius: 10px; margin: 24px 0; line-height: 1.9; }
+.math-result-summary > strong { display: block; font-size: 22px; margin: 22px 0 10px; }
+.math-plan { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line); padding: 20px 0; }
+.math-plan h3 { margin: 0 0 8px; font-size: 16px; }
+.math-plan p { margin: 0; line-height: 1.8; font-size: 14px; }
+.math-plan button { flex-shrink: 0; }
+.math-type { padding: 20px; background: var(--paper); border-radius: 10px; margin: 16px 0; }
+.math-type h3 { font-size: 16px; margin: 0; }
+.math-type > p { font-size: 14px; line-height: 1.9; margin: 12px 0; }
+.math-type > p.note { font-size: 12px; }
+.math-type .btn { margin-top: 16px; }
+.math-evidence { margin: 16px 0; font-size: 13px; line-height: 1.9; }
+.math-evidence > summary { cursor: pointer; }
+.math-evidence-item { border-top: 1px solid var(--line); padding: 14px 0; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .math-controls { align-items: stretch; flex-direction: column; gap: 14px; }
+  .math-controls label { min-width: 0; }
+  .math-counts { flex-direction: column; gap: 10px; }
+  .math-plan { align-items: stretch; flex-direction: column; gap: 14px; }
+  .math-plan .btn, .math-diagnostic-form .btn { width: 100%; }
+  .math-type { padding: 16px; }
+  .math-question { font-size: 20px; }
+  .math-session .actions { flex-wrap: wrap; }
+  .section-title > select { max-width: 100%; font-size: 12px; }
+}

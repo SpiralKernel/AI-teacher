@@ -1,5 +1,5 @@
 {
-  "version": "junior-2026.10.2",
+  "version": "junior-2026.10.3",
   "checked_date": "2026-10-08",
   "authoring": "学习目标和检查表现由项目改写；未教师审定。附件与教材缓存不进入Git。",
   "standards": [
@@ -243,7 +243,69 @@
         }
       ],
       "verified": "目录与章节组织；不是教材正文、题目或逐条课标覆盖审定"
+    },
+    {
+      "scope_id": "math-7-1",
+      "source_type": "user_pdf",
+      "edition": "人教版 · 文件内版次年份未确认",
+      "sha256": "341776bff427fec53b3e18a40bae91897c304eefc1b5dbb1298ff0ab010aa28e",
+      "checked_pages": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "review_file": "app/data/textbook_reviews.json",
+      "verified": "目录主题与章节顺序；不认证所有细目、教材正文、题目答案或逐条课标覆盖。"
+    },
+    {
+      "scope_id": "math-7-2",
+      "source_type": "user_pdf",
+      "edition": "人教版 · 文件内版次年份未确认",
+      "sha256": "45557aebfb458fa033dc2de2009308321f93e1539c532fede0cea926f9e2c65d",
+      "checked_pages": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "review_file": "app/data/textbook_reviews.json",
+      "verified": "目录主题与章节顺序；不认证所有细目、教材正文、题目答案或逐条课标覆盖。"
+    },
+    {
+      "scope_id": "math-8-1",
+      "source_type": "user_pdf",
+      "edition": "人教版 · 文件内版次年份未确认",
+      "sha256": "169c0091064d3e28f245fa63c47787c78d879488b72378aa8a6eb068fe4a197c",
+      "checked_pages": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "review_file": "app/data/textbook_reviews.json",
+      "verified": "目录主题与章节顺序；不认证所有细目、教材正文、题目答案或逐条课标覆盖。"
+    },
+    {
+      "scope_id": "math-8-2",
+      "source_type": "user_pdf",
+      "edition": "人教版 · 文件内版次年份未确认",
+      "sha256": "98e4121b003d6993de34ff6716f1ccbc334f25b68f1c0eeb070c73396762ba98",
+      "checked_pages": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        7
+      ],
+      "review_file": "app/data/textbook_reviews.json",
+      "verified": "目录主题与章节顺序；不认证所有细目、教材正文、题目答案或逐条课标覆盖。"
     }
   ],
-  "remaining_scopes": "其余册次为课标进阶建议；人教社网站进一步读取遇到验证，未继续自动下载。"
+  "remaining_scopes": "其余阶段仍为课标进阶建议。用户提供的数学九下已核对目录，但章节安排与当前建议进度不同，单独保留版本参考，尚未切换学习范围。",
+  "local_textbook_reviews": "app/data/textbook_reviews.json"
 }

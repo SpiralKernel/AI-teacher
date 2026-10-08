@@ -22,7 +22,7 @@ def question(qid, knowledge, subject="math", **extra):
 
 @pytest.fixture
 def setup(tmp_path):
-    settings = Settings(database_path=tmp_path / "course.sqlite3", deepseek_api_key="local-only", _env_file=None)
+    settings = Settings(auth_required=False, database_path=tmp_path / "course.sqlite3", deepseek_api_key="local-only", _env_file=None)
     with TestClient(create_app(settings)) as client:
         with connect(settings.database_path) as db:
             bank.import_records(db, "course-test", [question("absolute", "绝对值"), question("quadratic", "二次函数"),
@@ -44,6 +44,28 @@ def test_catalog_has_stages_and_verifiable_requirements(setup):
     assert client.get("/api/v1/courses?subject=music").status_code == 422
     assert {b["grade"] for b in BOOKS if b["subject"] == "chemistry"} == {9}
     assert {b["grade"] for b in BOOKS if b["subject"] == "biology"} == {7, 8}
+
+
+def test_local_textbook_review_does_not_promote_a_different_edition(setup):
+    client, settings = setup
+    books = {b["id"]: b for b in client.get("/api/v1/courses?subject=math").json()["books"]}
+    for bid in ("math-7-1", "math-7-2", "math-8-1", "math-8-2"):
+        book = books[bid]
+        assert book["basis"] == "pep_toc_verified"
+        assert book["textbook_review"]["edition_year"] is None
+        assert len(book["units"]) == len(book["textbook_review"]["chapters"])
+        assert all(u["textbook_chapter"]["unit_id"] == u["id"] for u in book["units"])
+    alternate = books["math-9-2"]
+    assert alternate["basis"] == "standard_progression"
+    assert alternate["textbook_review"]["alignment"] == "different_chapter_arrangement"
+    assert alternate["textbook_review"]["chapters"][0]["name"] == "反比例函数"
+    assert alternate["units"][0]["name"] == "相似"
+    assert all(c["unit_id"] is None for c in alternate["textbook_review"]["chapters"])
+    with connect(settings.database_path) as db:
+        context = courses.context(db, "math", book_id="math-9-2")
+    assert context["basis"] == "standard_progression"
+    assert context["textbook_review"]["alignment"] == "different_chapter_arrangement"
+    assert "尚未切换" in context["textbook_review"]["note"]
 
 
 def test_setting_persists_and_cross_subject_unit_rejected(setup):
@@ -136,7 +158,7 @@ def test_ai_selection_receives_goals_and_cannot_escape_course_scope(setup, monke
     client, _ = setup
     captured = []
     async def fake(settings, messages, schema, vision=False):
-        value = json.loads(messages[0]["content"].split("\n", 1)[1]); captured.append(value)
+        value = json.loads(messages[1]["content"])["learning_material"]; captured.append(value)
         return Plan(tag_id=value["tags"][0]["id"], difficulty=1, reason="按当前目标诊断。")
     monkeypatch.setattr("app.bank_ai.request_json", fake)
     result = client.post("/api/v1/bank/plan", json={"course_book_id": "math-7-1", "course_unit_id": "math-7-1:u1"}).json()
@@ -156,7 +178,7 @@ def test_tutor_receives_selected_stage_and_outside_scope_notice(setup, monkeypat
     client.post("/api/v1/courses/setting", json={"subject": "math", "book_id": "math-9-1", "unit_id": None})
     captured = []
     async def fake(settings, messages, schema, vision=False):
-        captured.append(json.loads(messages[0]["content"].split("\n", 1)[1]))
+        captured.append(json.loads(messages[1]["content"])["learning_material"])
         return TutorContent(reply="先检查这个前置概念。", check_question="距离能为负吗？")
     monkeypatch.setattr("app.bank_ai.request_json", fake)
     a = client.post("/api/v1/bank/next", json={"question_id": "bank:course:absolute"}).json()
@@ -204,7 +226,7 @@ def test_version_four_migration_preserves_answers(setup):
         db.execute("PRAGMA user_version=4")
     initialize(settings.database_path)
     with connect(settings.database_path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 9
         assert json.loads(db.execute("SELECT result FROM bank_attempts WHERE id=?", (a["attempt_id"],)).fetchone()[0]) == result
         assert db.execute("SELECT COUNT(*) FROM course_question_links").fetchone()[0] > 0
 
