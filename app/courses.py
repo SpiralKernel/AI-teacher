@@ -15,8 +15,8 @@ from app.db import audit, dumps, now
 
 
 class CourseSetting(BaseModel):
-    subject: str = Field(max_length=30)
-    book_id: str = Field(max_length=80)
+    subject: str = Field(min_length=1, max_length=30)
+    book_id: str = Field(min_length=1, max_length=80)
     unit_id: str | None = Field(default=None, max_length=100)
 
 

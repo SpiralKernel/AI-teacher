@@ -65,7 +65,9 @@ uv run python scripts/check_vision.py
 
 ## 学习阶段与课程依据
 
-在“全科题库”中选择学习阶段、当前单元，可查看这个阶段需要会什么、怎样检查、哪些目标尚待诊断或补题。阶段按科目保存，默认“仅练当前学习范围”，后端同时约束手动选题和AI选题；取消勾选可浏览更广范围。辅导、模型选题和大题评阅会收到当前目标、前置知识与证据摘要，不把后续知识假定为已学。
+点击主导航“设置”，或顶部显示当前科目和阶段的按钮，即可切换学习科目、年级学期、单元，设置练习范围及挑战题偏好。点击“保存设置”或“保存并进入题库”生效；当前科目和偏好保存在数据库，刷新继续使用，各科分别记住自己的学期与单元。首页也有切换入口；切换到其它阶段后提供当前题库入口。
+
+在“全科题库”可快捷切换学习阶段、当前单元，查看这个阶段需要会什么、怎样检查、哪些目标尚待诊断或补题。默认“仅练当前学习范围”，后端同时约束手动选题和AI选题；取消勾选可浏览更广范围。辅导、模型选题和大题评阅会收到当前目标、前置知识与证据摘要，不把后续知识假定为已学。
 
 已核对人教社公开电子教材目录的册次：数学七上（2024）、语文八下（2025）、英语九上（2026）。其它册次依据教育部2022年版课标整理，学期/单元拆分是项目建议，页面明确显示未核对状态；不能视为全部人教版目录已覆盖。科学与理化生可按学校课程安排选用，信息科技九年级为可选复习/项目安排。
 
@@ -126,9 +128,10 @@ uv run python -m app.manage backup
 
 ```bash
 uv run pytest -q
-node --check web/app.js
-node --check web/materials.js
-node --check web/bank.js
+node --check web/js/app.js
+node --check web/js/materials.js
+node --check web/js/bank.js
+node --check web/js/settings.js
 uv run python scripts/export_curriculum.py --check
 uv run python scripts/browser_smoke.py
 uv run python scripts/browser_materials.py
@@ -147,6 +150,7 @@ app/
   course_catalog.py 全科学段方向、阶段目标和教材核对状态
   courses.py        阶段设置、候选题映射、目标证据与AI上下文
   course_api.py     学习阶段与目标报告接口
+  preferences.py    当前科目和练习偏好持久化
   questions.py      基础模板、数值判分与校验
   challenges.py     挑战模板与独立校验
   question_types.py 题型注册与画像
@@ -159,11 +163,13 @@ app/
   learning.py       掌握证据、推荐与作答事务
   tutor.py          DeepSeek 与规则辅导
   manage.py         同步、统计与备份
-web/                无需构建的中文手机适配界面
+web/                index.html入口；js/逻辑、css/样式、assets/图片、vendor/本地依赖
 tests/              自动化测试
 scripts/            浏览器及真实 API 检查
-docs/               课程边界、架构、来源与验证
+docs/               课程边界、架构、来源与验证；previews/存放截图
 ```
+
+本地根目录为`/home/sink/AI-teacher`。[目录与维护入口](docs/project-structure.md)列出文件职责、数据路径和常用命令。
 
 后续继续核对其余教材目录、审核目标与候选题覆盖，补齐缺少的题型；再扩展多学生与安卓客户端。[架构与安卓路线](docs/architecture.md)。
 

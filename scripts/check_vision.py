@@ -34,7 +34,7 @@ async def main():
         settings.database_path=Path(temp)/"test.sqlite3"
         initialize(settings.database_path)
         content=sample_image()
-        (ROOT/"docs/vision-test-sample.png").write_bytes(content)
+        (ROOT/"docs/previews/vision-test-sample.png").write_bytes(content)
         import_id=create_import(settings,[("原创已答示例.png",content)],"completed",1,0)
         with connect(settings.database_path) as db:db.execute("UPDATE imports SET status='processing' WHERE id=?",(import_id,))
         await process_import(settings,import_id,asyncio.Semaphore(1))

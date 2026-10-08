@@ -142,6 +142,14 @@ function bankFilter(label, field, options) {
     {
       "aria-label": label,
       onChange: async (e) => {
+        if (field === "subject") {
+          try {
+            const course = await api("/courses?" + new URLSearchParams({subject: e.target.value}));
+            await applyLearningPreferences(course.setting);
+            await bankRefresh();
+          } catch (error) { toast(error.message); render(); }
+          return;
+        }
         bankState[field] = e.target.value;
         bankState.offset = 0;
         if (field === "subject") {
@@ -159,7 +167,7 @@ function bankFilter(label, field, options) {
 
 async function bankCourseChange(bookId, unitId = "") {
   try {
-    await api("/courses/setting", {subject: bankState.subject, book_id: bookId, unit_id: unitId || null});
+    await applyLearningPreferences({subject: bankState.subject, book_id: bookId, unit_id: unitId || null});
     bankState.tag_id = "";
     bankState.offset = 0;
     await bankRefresh();
@@ -191,7 +199,10 @@ function bankCoursePanel() {
       el("label", {class: "bank-filter"}, el("span", {}, "当前学习单元"), unitSelect)),
     el("label", {class: "course-limit"}, el("input", {
       type: "checkbox", checked: bankState.limitCourse,
-      onChange: async (e) => { bankState.limitCourse = e.target.checked; bankState.offset = 0; await bankRefresh(); },
+      onChange: async (e) => {
+        try { await applyLearningPreferences({limit_course: e.target.checked}); await bankRefresh(); }
+        catch (error) { toast(error.message); render(); }
+      },
     }), "仅练当前学习范围"),
     el("p", {class: "course-edition"}, book.edition),
     el("p", {class: "note"}, book.scope_note),
@@ -212,7 +223,12 @@ function bankCoursePanel() {
           el("p", {class: "note"}, `${g.attempts} 道有效作答 · ${g.type_count} 类题型 · ${g.question_count} 道候选题`,
             g.practical ? " · 实际操作表现需另行观察" : ""),
           g.question_count === 0 ? el("p", {class: "course-missing"}, "这个目标还缺候选练习，保留为待补题，不据此判断你不会。") : null)),
-        !report.unit_id ? button("练这个单元", async () => {if (!await bankCourseChange(book.id, u.id)) return; bankState.limitCourse = true; await bankRefresh(); await bankStart();}, "light") : null);
+        !report.unit_id ? button("练这个单元", async () => {
+          try {
+            await applyLearningPreferences({book_id: book.id, unit_id: u.id, limit_course: true});
+            await loadBank(); await bankStart();
+          } catch (error) { toast(error.message); }
+        }, "light") : null);
     }),
     el("p", {class: "note"}, report.note),
     el("details", {class: "course-sources"}, el("summary", {}, "整个初中阶段的能力方向"),
@@ -314,7 +330,7 @@ function bankView() {
     ),
     filters,
     bankCoursePanel(),
-    bankState.attempt ? bankWorkspace() : null,
+    bankState.attempt?.question.subject === bankState.subject ? bankWorkspace() : null,
     bankProfilePanel(profile),
     el(
       "div",

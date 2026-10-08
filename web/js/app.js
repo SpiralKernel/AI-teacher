@@ -4,6 +4,7 @@ const state = {
   curriculum: null,
   student: null,
   health: null,
+  learning: null,
   history: [],
   attempt: null,
   result: null,
@@ -142,11 +143,14 @@ function render() {
     materials: "拍照与试卷",
     bank: "全科题库",
     progress: "学习记录",
+    settings: "设置",
   }[state.view];
   document.querySelector(".topbar > span").firstChild.textContent =
-    state.view === "bank" ? "初中 " : "数学 ";
+    ["practice", "materials"].includes(state.view) ? "数学 " : (state.learning?.scope.subject_name || "初中") + " ";
+  document.querySelector("#learning-switch").textContent = learningLabel() + " · 设置";
+  document.querySelector("#learner-scope").textContent = learningLabel();
   document.querySelector("footer span").textContent =
-    state.view === "bank" ? "初中全学段 / 多科题库" : "七年级上册 / 起步版";
+    state.view === "materials" ? "七上数学 / 已答试卷" : state.view === "practice" ? "七上数学 / 模板练习" : learningLabel();
   root.replaceChildren(
     state.view === "learn"
       ? learnView()
@@ -154,6 +158,8 @@ function render() {
         ? practiceView()
         : state.view === "bank"
           ? bankView()
+          : state.view === "settings"
+            ? settingsView()
           : state.view === "materials"
             ? materialView()
             : progressView(),
@@ -174,6 +180,7 @@ function render() {
     });
 }
 function learnView() {
+  if (state.learning.book_id !== "math-7-1" || state.learning.unit_id) return stageHomeView();
   const recommended = knowledge(state.student.recommendation.knowledge_id);
   const hero = el(
     "section",
@@ -249,6 +256,7 @@ function learnView() {
     "div",
     {},
     heading("你好，今天也向前一步。", "把不懂的地方，变成下一次进步的起点。"),
+    learningOverview(),
     hero,
     stats(),
     el(
@@ -737,8 +745,10 @@ function difficultyControls() {
       el("input", {
         type: "checkbox",
         checked: state.allowChallenge,
-        onChange: (e) => {
-          state.allowChallenge = e.target.checked;
+        onChange: async (e) => {
+          try { await applyLearningPreferences({allow_challenge: e.target.checked}); }
+          catch (error) { toast(error.message); }
+          render();
         },
       }),
       "自动模式随机混入挑战题（15%）",
@@ -856,6 +866,7 @@ async function exportData() {
             history: history.items,
             imports,
             bank: await api("/bank/export"),
+            learning_preferences: state.learning,
           },
           null,
           2,
@@ -874,6 +885,11 @@ async function exportData() {
 document.querySelectorAll("[data-view]").forEach((n) =>
   n.addEventListener("click", async () => {
     if (state.busy) return;
+    if (n.dataset.view === "settings") { await openSettings(); return; }
+    if (n.dataset.view === "practice" && (state.learning.book_id !== "math-7-1" || state.learning.unit_id)) {
+      await openCurrentBank();
+      return;
+    }
     if (n.dataset.view === "materials") {
       try {
         await loadMaterials();
@@ -904,11 +920,13 @@ document.querySelectorAll("[data-view]").forEach((n) =>
 );
 async function init() {
   try {
-    [state.curriculum, state.student, state.health] = await Promise.all([
+    [state.curriculum, state.student, state.health, state.learning] = await Promise.all([
       api("/curriculum"),
       api("/student"),
       api("/health"),
+      api("/courses/preferences"),
     ]);
+    useLearningPreferences(state.learning);
     render();
   } catch (e) {
     root.replaceChildren(
@@ -922,4 +940,7 @@ async function init() {
     );
   }
 }
+document.querySelector("#learning-switch").addEventListener("click", () => {
+  if (state.learning && !state.busy) openSettings();
+});
 init();

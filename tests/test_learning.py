@@ -187,5 +187,5 @@ def test_unknown_resources_and_static_frontend(client):
     assert client.post("/api/v1/practice/next",json={"knowledge_id":"unknown"}).status_code == 404
     assert client.post("/api/v1/attempts/unknown/answer",json={"answer":"1"}).status_code == 404
     assert client.get("/").status_code == 200
-    assert client.get("/static/app.js").status_code == 200
+    assert client.get("/static/js/app.js").status_code == 200
     assert client.get("/api/v1/student").headers["Cache-Control"] == "no-store"

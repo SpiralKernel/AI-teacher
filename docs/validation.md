@@ -4,9 +4,9 @@
 
 | 验证 | 结果 |
 | --- | --- |
-| pytest 自动测试 | 106 项通过；一个上游 Starlette TestClient 弃用提示，无测试失败 |
+| pytest 自动测试 | 109 项通过；一个上游 Starlette TestClient 弃用提示，无测试失败 |
 | 题目参数覆盖 | 基础 12 模板 ×250，挑战 12 模板 ×200，共 5,400 套；答案与独立不变量通过 |
-| JavaScript 语法 | `web/app.js`、`web/materials.js` 与 `web/bank.js` 通过 |
+| JavaScript 语法 | `web/js/app.js`、`web/js/materials.js`、`web/js/bank.js`、`web/js/settings.js`通过 |
 | 桌面浏览器 | 1440px 宽 Chrome，学习地图、提示、输入校验、辅导、提交和历史通过 |
 | 手机浏览器 | 390px 宽 Chrome，地图与练习无横向溢出 |
 | 输入保持 | 提示和辅导重新渲染后，未提交答案草稿仍保留 |
@@ -23,19 +23,22 @@
 | 阶段要求与来源 | 11科56个阶段、170个单元、186项目标；数学七上2024、语文八下2025、英语九上2026目录已核对，其余明确标为课标进阶建议；导出文档与运行时目录一致 |
 | 目标证据与AI上下文 | 原地图作答只映射相关目标；无证据保持未知，一题答对不算达标，实践不凭选择题认证；AI选题/辅导收到当前阶段要求并拒绝越出所选候选范围的标签；历史题归档后重建映射仍保留证据 |
 | 阶段浏览器操作 | 临时库验证切换年级、刷新后进度保存、按单元限制候选题、长阅读和390px手机布局；没有新增真实学生作答 |
+| 集中设置 | 主导航、顶部和首页入口可见；科目/年级学期/单元、课程范围和挑战偏好保存并刷新恢复；各科进度独立，化学仅九年级；原数学与试卷流程继续通过 |
 | 材料校验 | 图片实际格式/尺寸、PDF 限页/加密、事务回滚、重复导入去重、求助权重、空白/未知不计错通过 |
 | Key 管理 | `.env` 权限 0600；Git 忽略；未下发至前端 |
 | 数据备份 | SQLite 在线备份、导入页面和全科答题照片备份支持；备份文件被 Git 忽略 |
-| 实际空间升级 | schema 5；升级前在线备份，原6次作答、答案和评分及10张学生数据表逐条核对一致，全科题快照哈希不变；15,338条候选目标映射含历史快照，当前七上数学1,647道候选可练题；未新增实际全科作答 |
+| 实际空间升级 | schema6；设置升级前在线备份，用户已有9次作答及答案评分、11张记录/进度表逐条核对一致，全科题快照哈希不变；15,338条候选目标映射含历史快照；实际服务与设置入口只读检查通过 |
 
 浏览器与自动化测试均使用临时数据库，没有写入实际学生记录。新数据库初始为 96 道题；实际学习空间保留用户先前作答并自动补题。真实识图样本是排版文本，不能证明任意手写、复杂图形或整册材料的识别准确率。
 
 真实调用仅验证测试时的可用性。没有 Key 时辅导可以使用规则提示；配置 Key 后全科 AI 调用失败会明确报错并允许重试。识图/照片评阅依赖所配置模型的视觉能力，不能据排版测试推断任意手写过程都能可靠判断。来源答案与 AI 反馈仍需复核。
 
-预览：[桌面学习地图](preview-desktop.png)、[桌面练习](preview-practice.png)、[手机学习地图](preview-mobile.png)、[手机练习](preview-mobile-practice.png)。
+预览：[桌面学习地图](previews/preview-desktop.png)、[桌面练习](previews/preview-practice.png)、[手机学习地图](previews/preview-mobile.png)、[手机练习](previews/preview-mobile-practice.png)。
 
-新增预览：[试卷核对](preview-import-review.png)、[试卷报告](preview-import-report.png)、[细分题型画像](preview-question-types.png)、[手机试卷](preview-import-mobile.png)。
+新增预览：[试卷核对](previews/preview-import-review.png)、[试卷报告](previews/preview-import-report.png)、[细分题型画像](previews/preview-question-types.png)、[手机试卷](previews/preview-import-mobile.png)。
 
-全科预览：[照片大题](preview-bank-written.png)、[长阅读](preview-bank-reading.png)、[手机长阅读](preview-bank-mobile.png)。
+全科预览：[照片大题](previews/preview-bank-written.png)、[长阅读](previews/preview-bank-reading.png)、[手机长阅读](previews/preview-bank-mobile.png)。
 
-课程预览：[当前阶段目标与候选练习](preview-course-targets.png)。实际用户原有6道作答对应3项目标：数轴/相反数3道、绝对值2道、有理数加减1道；其余15项目标保持待诊断。候选映射不是教材内容逐题审定；仍有目标缺题。
+课程预览：[当前阶段目标与候选练习](previews/preview-course-targets.png)。课程模块首次升级时的6道作答对应3项目标：数轴/相反数3道、绝对值2道、有理数加减1道；当时其余15项目标保持待诊断。候选映射不是教材内容逐题审定；仍有目标缺题。
+
+设置预览：[桌面设置](previews/preview-settings-desktop.png)、[手机设置](previews/preview-settings-mobile.png)。目录职责及运行数据路径见[本地目录与维护入口](project-structure.md)。

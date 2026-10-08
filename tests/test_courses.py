@@ -57,6 +57,42 @@ def test_setting_persists_and_cross_subject_unit_rejected(setup):
     assert client.get("/api/v1/courses").json()["setting"] == body
 
 
+def test_learning_preferences_persist_with_separate_subject_progress(setup):
+    client, settings = setup
+    defaults = client.get("/api/v1/courses/preferences").json()
+    assert defaults["subject"] == "math" and defaults["limit_course"] and defaults["allow_challenge"]
+    math = {"subject": "math", "book_id": "math-8-2", "unit_id": "math-8-2:u3", "limit_course": False, "allow_challenge": False}
+    assert client.post("/api/v1/courses/preferences", json=math).status_code == 200
+    chemistry = {**math, "subject": "chemistry", "book_id": "chemistry-9-1", "unit_id": None}
+    assert client.post("/api/v1/courses/preferences", json=chemistry).status_code == 200
+    initialize(settings.database_path)
+    current = client.get("/api/v1/courses/preferences").json()
+    assert all(current[key] == value for key, value in chemistry.items())
+    assert current["scope"]["subject_name"] == "化学" and current["scope"]["stage_label"] == "9年级 · 上学期"
+    assert client.get("/api/v1/courses?subject=math").json()["setting"] == {k:math[k] for k in ("subject", "book_id", "unit_id")}
+
+
+def test_invalid_preferences_do_not_change_any_saved_settings(setup):
+    client, _ = setup
+    before = client.get("/api/v1/courses/preferences").json()
+    for change in ({"book_id": "chinese-7-1"}, {"unit_id": "math-8-2:u1"}, {"book_id": ""}, {"subject": "music"}):
+        result = client.post("/api/v1/courses/preferences", json={**before, **change})
+        assert result.status_code == 422
+        assert client.get("/api/v1/courses/preferences").json() == before
+
+
+def test_version_five_upgrade_retains_course_progress(setup):
+    client, settings = setup
+    body = {"subject": "math", "book_id": "math-8-2", "unit_id": "math-8-2:u3"}
+    client.post("/api/v1/courses/setting", json=body)
+    with connect(settings.database_path) as db:
+        db.execute("DROP TABLE student_preferences")
+        db.execute("PRAGMA user_version=5")
+    initialize(settings.database_path)
+    result = client.get("/api/v1/courses/preferences").json()
+    assert all(result[key] == value for key, value in body.items())
+
+
 def test_course_filter_uses_knowledge_mapping_not_stem_or_guessed_grade(setup):
     client, settings = setup
     result = client.get("/api/v1/bank/questions", params={"subject": "math", "course_book_id": "math-7-1", "course_unit_id": "math-7-1:u1"}).json()
@@ -163,12 +199,12 @@ def test_version_four_migration_preserves_answers(setup):
     a = client.post("/api/v1/bank/next", json={"question_id": "bank:course:absolute"}).json()
     result = client.post(f"/api/v1/bank/attempts/{a['attempt_id']}/answer", json={"answer": "A"}).json()
     with connect(settings.database_path) as db:
-        for table in ("course_question_links", "course_mapping_state", "course_settings"):
+        for table in ("course_question_links", "course_mapping_state", "course_settings", "student_preferences"):
             db.execute("DROP TABLE " + table)
         db.execute("PRAGMA user_version=4")
     initialize(settings.database_path)
     with connect(settings.database_path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 6
         assert json.loads(db.execute("SELECT result FROM bank_attempts WHERE id=?", (a["attempt_id"],)).fetchone()[0]) == result
         assert db.execute("SELECT COUNT(*) FROM course_question_links").fetchone()[0] > 0
 

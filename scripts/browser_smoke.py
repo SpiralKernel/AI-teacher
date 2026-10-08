@@ -45,7 +45,7 @@ def main():
                 page.goto(URL)
                 expect(page.get_by_role("heading", name="你的数学地图")).to_be_visible()
                 expect(page.locator(".knowledge")).to_have_count(12)
-                page.screenshot(path=ROOT/"docs/preview-desktop.png",full_page=True,animations="disabled")
+                page.screenshot(path=ROOT/"docs/previews/preview-desktop.png",full_page=True,animations="disabled")
                 with page.expect_response("**/api/v1/practice/next") as response:
                     page.get_by_role("button",name="开始今日练习").click()
                 attempt = response.value.json()
@@ -67,7 +67,7 @@ def main():
                 page.get_by_role("button",name="提交答案").click()
                 expect(page.get_by_role("heading",name="✓ 答对了，继续保持思考。")).to_be_visible()
                 expect(page.locator(".result")).to_contain_text("使用过提示或辅导")
-                page.screenshot(path=ROOT/"docs/preview-practice.png",full_page=True,animations="disabled")
+                page.screenshot(path=ROOT/"docs/previews/preview-practice.png",full_page=True,animations="disabled")
                 page.get_by_role("button",name="学习记录",exact=False).click()
                 expect(page.locator(".record")).to_have_count(1)
                 page.get_by_text("查看答案与解析").click()
@@ -79,15 +79,15 @@ def main():
                 page.set_viewport_size({"width":390,"height":844})
                 expect(page.get_by_role("heading",name="你的数学地图")).to_be_visible()
                 assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "手机页面存在横向溢出"
-                page.screenshot(path=ROOT/"docs/preview-mobile.png",full_page=True,animations="disabled")
+                page.screenshot(path=ROOT/"docs/previews/preview-mobile.png",full_page=True,animations="disabled")
                 page.get_by_role("button",name="开始今日练习").click()
                 expect(page.get_by_label("你的答案",exact=True)).to_be_visible()
                 assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "手机练习页面存在横向溢出"
-                page.screenshot(path=ROOT/"docs/preview-mobile-practice.png",full_page=True,animations="disabled")
+                page.screenshot(path=ROOT/"docs/previews/preview-mobile-practice.png",full_page=True,animations="disabled")
                 assert not errors, errors
                 browser.close()
             print("浏览器验证通过：桌面、390px 手机、提示草稿、非法答案、规则辅导、判分、历史解析、导出和无横向溢出。")
-            print("截图：docs/preview-{desktop,practice,mobile,mobile-practice}.png；真实学习数据库未修改。")
+            print("截图：docs/previews/preview-{desktop,practice,mobile,mobile-practice}.png；真实学习数据库未修改。")
         finally:
             process.terminate()
             process.wait(timeout=10)

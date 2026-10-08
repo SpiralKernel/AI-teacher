@@ -1728,3 +1728,40 @@ footer {
 .course-missing { color: #88683e; }
 .course-sources { margin-top: 14px; font-size: 13px; }
 @media (max-width: 600px) { .course-selects { grid-template-columns: 1fr; } }
+
+/* 全局学习范围入口与集中设置 */
+.learning-switch { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; background: var(--soft); color: var(--green); font-size: 12px; text-align: left; }
+.learning-switch:hover { border-color: var(--green); }
+.learning-overview { display: flex; align-items: center; justify-content: space-between; gap: 20px; border: 1px solid var(--line); background: white; border-radius: 12px; padding: 22px 26px; margin-bottom: 24px; }
+.learning-overview h2 { font-size: 20px; margin: 8px 0; }
+.learning-overview p { color: var(--muted); font-size: 13px; margin: 0; }
+.learning-overview .actions { margin: 0; flex-shrink: 0; }
+.settings-current { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin: 0 0 22px; padding: 18px 22px; background: var(--soft); border-radius: 9px; font-size: 13px; }
+.settings-current strong { font-size: 17px; }
+.settings-current > span:last-child { color: var(--muted); }
+.settings-form { max-width: 880px; }
+.settings-form h2 { font-size: 19px; margin: 0 0 12px; }
+.settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 18px; margin: 24px 0; }
+.settings-field { display: flex; flex-direction: column; gap: 10px; font-size: 13px; min-width: 0; }
+.settings-field:last-child { grid-column: 1 / -1; }
+.settings-field select { width: 100%; padding: 13px; border: 1px solid var(--line); border-radius: 8px; background: #fafbf7; color: var(--ink); font: inherit; min-height: 46px; }
+.settings-basis { border-left: 3px solid var(--accent); background: var(--paper); padding: 16px; margin: 20px 0 30px; font-size: 13px; line-height: 1.9; }
+.settings-basis p { margin: 6px 0 0; color: var(--muted); }
+.settings-toggle { display: flex; align-items: flex-start; gap: 12px; padding: 18px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.settings-toggle input { margin: 5px 0 0; width: 18px; height: 18px; accent-color: var(--green); }
+.settings-toggle strong, .settings-toggle small { display: block; }
+.settings-toggle strong { font-size: 14px; }
+.settings-toggle small { margin-top: 7px; font-size: 12px; color: var(--muted); line-height: 1.8; }
+.settings-form .actions { margin: 26px 0 0; }
+@media (max-width: 720px) {
+  nav { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 3px; }
+  nav .nav-item { padding: 10px 4px; border-radius: 7px; font-size: 12px; }
+  nav .nav-item span { display: inline-block; width: 20px; font-size: 14px; }
+  .learning-switch { max-width: 58%; font-size: 11px; padding: 8px 10px; line-height: 1.6; }
+  .learning-overview { align-items: stretch; flex-direction: column; padding: 20px; }
+  .learning-overview h2 { font-size: 18px; }
+  .learning-overview .actions { flex-wrap: wrap; }
+  .settings-grid { grid-template-columns: 1fr; }
+  .settings-current { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .settings-form .actions .btn { width: 100%; }
+}

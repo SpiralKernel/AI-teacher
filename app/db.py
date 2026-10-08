@@ -39,7 +39,7 @@ def initialize(path: Path):
     with connect(path) as db:
         db.execute("PRAGMA journal_mode = WAL")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version > 5:
+        if version > 6:
             raise RuntimeError("数据库版本高于应用支持版本，拒绝降级打开。")
         if version == 0:
             db.executescript("""
@@ -156,6 +156,14 @@ def initialize(path: Path):
                 CREATE TABLE course_mapping_state(
                     question_id TEXT PRIMARY KEY REFERENCES bank_questions(id),signature TEXT NOT NULL);
                 PRAGMA user_version=5;
+                COMMIT;
+            """)
+        if version < 6:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE student_preferences(
+                    student_id TEXT PRIMARY KEY REFERENCES students(id),data TEXT NOT NULL);
+                PRAGMA user_version=6;
                 COMMIT;
             """)
         db.execute("BEGIN IMMEDIATE")
