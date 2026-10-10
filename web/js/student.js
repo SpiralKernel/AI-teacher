@@ -775,9 +775,7 @@ import { createReportUI } from "./report.js";
               el(
                 "span",
                 { class: `badge ${t.status === "需要补强" ? "warn" : ""}` },
-                t.independent_count >= 5
-                  ? t.status
-                  : t.learning_status || t.status,
+                t.current_status || t.learning_status || t.status,
               ),
             ),
           )

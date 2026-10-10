@@ -57,6 +57,9 @@ def render(value):
             trend.add(String(x,y+5,str(v['independent']+v['assisted']+v['other']),fontName='STSong-Light',fontSize=8,fillColor=colors.HexColor(INK)))
             trend.add(String(x-3,7,v['day'][5:],fontName='STSong-Light',fontSize=7,fillColor=colors.HexColor(INK)))
         story.append(KeepTogether(trend_intro+[trend]))
+    if value.get('review_queue'):
+        story.extend([p('值得再检查一下',heading),p('距上次独立验证较久，建议用新题复测；不表示已经不会。',small)])
+        for item in value['review_queue']:story.append(p(item['name']))
     analysis=value['analysis'];story.extend([p('AI 学情分析' if value['analysis_source']=='ai' else '学习记录摘要',heading),p(analysis['summary'])])
     for text in analysis.get('strengths',[]):story.append(p('进展：'+text))
     names={t['id']:t['name'] for t in value['types']}
@@ -71,7 +74,7 @@ def render(value):
     if value['types']:
         story.append(p('题型观察',heading))
         rows=[[p('题型',small),p('独立作答',small),p('当前观察',small)]]
-        for t in value['types'][:25]:rows.append([p(t['name']),p(t['independent_count']),p(t['status'] if t['independent_count']>=5 else t.get('learning_status') or t['status'])])
+        for t in value['types'][:25]:rows.append([p(t['name']),p(t['independent_count']),p(t.get('current_status') or t.get('learning_status') or t['status'])])
         table=Table(rows,colWidths=[88*mm,25*mm,61*mm],repeatRows=1)
         table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor(BLUSH)),('VALIGN',(0,0),(-1,-1),'TOP'),('LINEBELOW',(0,0),(-1,-1),.4,colors.HexColor(BLUSH)),('TOPPADDING',(0,0),(-1,-1),7),('BOTTOMPADDING',(0,0),(-1,-1),7)]))
         story.append(table)

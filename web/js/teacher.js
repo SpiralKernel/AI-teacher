@@ -168,7 +168,19 @@ export function createTeacherUI(ui) {
                   el(
                     "div",
                     { class: "learning-note" },
-                    el("span", {}, "已记录 · " + note.note),
+                    el(
+                      "span",
+                      {},
+                      ({
+                        resolved: "已改善的历史记录",
+                        expired: "历史线索，待重新确认",
+                        superseded: "已由后续记录替代",
+                        legacy_unverified: "历史线索，尚待核实",
+                        invalid_time: "历史线索，尚待核实",
+                      }[note.memory_status] || "已记录") +
+                        " · " +
+                        note.note,
+                    ),
                     note.dismissed
                       ? el("small", {}, "已撤回")
                       : btn(

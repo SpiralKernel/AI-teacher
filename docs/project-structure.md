@@ -51,6 +51,7 @@ AI-teacher/
 | 学生账号、会话、请求作用域身份 | `app/auth.py`、`app/identity.py`、`app/main.py` | `tests/test_student.py` |
 | 题库与可靠题型证据、复测 | `app/study.py`、`web/js/student.js`、`web/css/student.css` | `tests/test_student.py`、`scripts/browser_student.py` |
 | 自由答疑与可纠正的学习线索 | `app/teacher.py`、`app/observations.py`、`web/js/teacher.js` | `tests/test_teacher_reports.py` |
+| 学生记忆生命周期、衰减、相关检索和复测调度 | `app/memory.py`、`app/study.py`、`app/reports.py` | `tests/test_memory.py`、`scripts/eval_memory.py` |
 | AI教学规则、引用约束与独立复核 | `app/ai_policy.py`、`app/observation_guard.py` | `tests/test_ai_guard.py`、`scripts/eval_teaching.py` |
 | 家长报告、AI分析、PDF | `app/reports.py`、`app/report_pdf.py`、`web/js/report.js` | `tests/test_teacher_reports.py` |
 | HTTP入口、原数学练习/试卷接口 | `app/main.py` | `tests/test_learning.py`、`tests/test_materials.py` |

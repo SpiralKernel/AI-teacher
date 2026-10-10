@@ -28,6 +28,8 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 
 题型状态只有“未评估 / 证据不足 / 需要补强 / 表现稳定”，不显示掌握百分比。判断结合最近五次表现及连续正确情况，属于保守的启发式规则，尚非经过校准的能力测验。重复题、使用提示的作答、导入试卷和 AI 评阅不会凑足独立核验题量。来源题未逐题核验时只保存作答记录，不据此形成可靠诊断。对话学习线索与独立练习状态分开保存和展示，不能因一次提问就判定不会。
 
+学生记忆保留来源和变化历史：新证据可让旧困难标为已改善，线索随时间降为待重新确认。历史练习表现与当前展示分开；出现新错误可提示“待独立验证”，距上次验证较久提示“建议复测”。题库优先安排到期复测，AI读取历史不会刷新验证时间，家长报告和PDF同步展示当前状态。
+
 目前七上有 37 个标准题型，其中 26 个有规则核验题。其余 11 个继续作为待补题型显示。七下和八、九年级可练习匹配课程目标的来源题，核验不足时不会假装形成可靠评分。具体规则见 [学生流程与证据](docs/student-flow.md)。
 
 ## AI 配置
@@ -76,6 +78,7 @@ AUTH_REQUIRED=true
 - [数学题型地图](docs/math-type-map.md)与[核验题覆盖](docs/math-coverage.md)
 - [教材获取清单](docs/textbook-catalog.md)
 - [AI教学规则、限制与评测](docs/ai-policy.md)
+- [学生记忆、衰减与复测规则](docs/student-memory.md)
 - [验证记录](docs/validation.md)
 
 ## 维护与验证
@@ -87,6 +90,7 @@ uv run python -m app.manage import-bank --stage junior
 uv run python scripts/export_curriculum.py --check
 uv run python scripts/export_math.py --check
 uv run python scripts/eval_teaching.py
+uv run python scripts/eval_memory.py
 uv run pytest -q
 PYTHONPATH=. uv run python scripts/browser_student.py
 ```

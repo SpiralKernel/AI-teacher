@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
@@ -16,9 +18,11 @@ from PIL import Image
 from playwright.sync_api import expect, sync_playwright
 
 from app import bank
-from app.db import connect, initialize
+from app.db import connect, dumps, initialize
+from app.math_learning import verified_pool
 
 ROOT=Path(__file__).resolve().parents[1]
+PREVIEWS=Path(os.environ.get('AI_TEACHER_PREVIEW_DIR',str(ROOT/'docs/previews')))
 
 
 def free_port():
@@ -33,7 +37,7 @@ class MockAI(BaseHTTPRequestHandler):
         if '模拟网络失败' in user:
             self.send_response(502);self.end_headers();return
         if '为家长生成' in system:
-            value=json.loads(data['messages'][1]['content'])['learning_material'];notes=[e for e in value['evidence'] if e.get('quote')]
+            value=json.loads(data['messages'][1]['content'])['learning_material'];notes=[e for e in value['evidence'] if e['id'] in value['focus_eligible_evidence_ids']]
             focus=[{'type_id':notes[-1]['type_id'],'finding':'对话与已核对练习显示，绝对值的距离含义还值得进一步检查。','evidence_ids':[notes[-1]['id']]}] if notes else []
             content={'summary':f"本期有{value['summary']['questions']}次主动提问。请结合独立练习观察理解情况，提问本身不代表不会。",'strengths':[],'focus':focus,'parent_actions':['请孩子用数轴解释绝对值的含义。','先听推理，再核对答案。'],'next_steps':['独立尝试一道新的绝对值题。'],'uncertainty':'当前材料含对话和导入线索，不能替代充分的独立证据。'}
         elif '试卷识别助手' in system:
@@ -57,6 +61,7 @@ class MockAI(BaseHTTPRequestHandler):
 
 
 def main():
+    PREVIEWS.mkdir(parents=True,exist_ok=True)
     chrome=shutil.which('google-chrome-stable') or shutil.which('chromium')
     if not chrome:raise SystemExit('需要本机 Chrome')
     port,ai_port=free_port(),free_port();url=f'http://127.0.0.1:{port}'
@@ -82,12 +87,12 @@ def main():
                 browser=p.chromium.launch(executable_path=chrome,headless=True,args=['--no-sandbox']);page=browser.new_page(viewport={'width':1440,'height':1050},accept_downloads=True)
                 page.set_default_timeout(12000);page.on('pageerror',lambda e:errors.append(str(e)));page.goto(url)
                 expect(page.get_by_role('heading',name='建立你的学习空间')).to_be_visible()
-                page.screenshot(path=ROOT/'docs/previews/preview-student-login-desktop.png',full_page=True,animations='disabled')
+                page.screenshot(path=PREVIEWS/'preview-student-login-desktop.png',full_page=True,animations='disabled')
                 page.get_by_label('用户名',exact=True).fill('browser_student');page.get_by_label('密码',exact=True).fill('test-pass-123');page.get_by_label('称呼',exact=True).fill('小林')
                 page.get_by_role('button',name='创建并开始学习',exact=True).click()
                 expect(page.get_by_role('heading',name='先从一个问题开始。')).to_be_visible();assert page.get_by_role('tab').count()==2
                 assert page.request.get(url+'/api/v1/study/home').json()['completed']==0
-                page.screenshot(path=ROOT/'docs/previews/preview-teacher-home-desktop.png',full_page=True,animations='disabled')
+                page.screenshot(path=PREVIEWS/'preview-teacher-home-desktop.png',full_page=True,animations='disabled')
                 page.get_by_label('向 AI 提问',exact=True).fill('绝对值为什么不能是负数？');page.get_by_role('button',name='发送问题',exact=True).click()
                 expect(page.get_by_text('已记录 · 正在了解这个题型，尚未判断掌握情况。',exact=True)).to_be_visible()
                 assert page.request.get(url+'/api/v1/study/home').json()['completed']==0
@@ -100,7 +105,7 @@ def main():
                 page.get_by_role('button',name='确认作答并分析',exact=True).click()
                 expect(page.get_by_text('图片作答已核对，后续讨论会参考核对后的内容。',exact=True)).to_be_visible()
                 assert page.request.get(url+'/api/v1/study/home').json()['completed']==0
-                page.screenshot(path=ROOT/'docs/previews/preview-teacher-chat-desktop.png',full_page=True,animations='disabled')
+                page.screenshot(path=PREVIEWS/'preview-teacher-chat-desktop.png',full_page=True,animations='disabled')
                 page.get_by_label('向 AI 提问',exact=True).fill('模拟网络失败');page.get_by_role('button',name='发送问题',exact=True).click()
                 expect(page.get_by_role('alert')).to_contain_text('AI 请求未完成');expect(page.get_by_label('向 AI 提问',exact=True)).to_have_value('模拟网络失败')
                 page.get_by_role('button',name='新提问',exact=True).click()
@@ -115,7 +120,7 @@ def main():
                 page.set_viewport_size({'width':390,'height':844});assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
                 page.get_by_role('button',name='问问 AI',exact=True).click();expect(page.get_by_role('dialog')).to_be_visible()
                 assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
-                page.screenshot(path=ROOT/'docs/previews/preview-teacher-drawer-mobile.png',full_page=False,animations='disabled')
+                page.screenshot(path=PREVIEWS/'preview-teacher-drawer-mobile.png',full_page=False,animations='disabled')
                 page.get_by_role('button',name='关闭问答',exact=True).click()
                 page.get_by_label('作答方式',exact=True).select_option('written');page.get_by_role('button',name='继续练习',exact=True).click()
                 expect(page.get_by_label('完整解答',exact=True)).to_be_visible();page.get_by_label('完整解答',exact=True).fill('由中点定义，AM=5。')
@@ -126,16 +131,33 @@ def main():
                 page.get_by_label('选择练习图片或PDF',exact=True).set_input_files({'name':'paper.png','mimeType':'image/png','buffer':png()});page.get_by_role('button',name='上传并预览',exact=True).click();page.get_by_role('button',name='开始识图',exact=True).click()
                 expect(page.get_by_label('第1题题干',exact=True)).to_be_visible(timeout=15000);page.get_by_label('第1题评价',exact=True).select_option('incorrect');page.get_by_text('我已核对这道题',exact=True).click();page.get_by_role('button',name='保存核对结果',exact=True).click()
                 expect(page.get_by_text('已保存核对结果，学习线索已更新。',exact=True)).to_be_visible()
-                page.screenshot(path=ROOT/'docs/previews/preview-import-current-mobile.png',full_page=True,animations='disabled')
+                page.screenshot(path=PREVIEWS/'preview-import-current-mobile.png',full_page=True,animations='disabled')
                 page.get_by_role('button',name='学情报告',exact=True).click();expect(page.get_by_role('heading',name='学习，一步一步看得见。')).to_be_visible()
                 expect(page.get_by_text('已结合学习证据',exact=True)).to_be_visible(timeout=15000);assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
-                page.screenshot(path=ROOT/'docs/previews/preview-parent-report-mobile.png',full_page=True,animations='disabled')
-                page.set_viewport_size({'width':1440,'height':1050});page.screenshot(path=ROOT/'docs/previews/preview-parent-report-desktop.png',full_page=True,animations='disabled')
+                page.screenshot(path=PREVIEWS/'preview-parent-report-mobile.png',full_page=True,animations='disabled')
+                page.set_viewport_size({'width':1440,'height':1050});page.screenshot(path=PREVIEWS/'preview-parent-report-desktop.png',full_page=True,animations='disabled')
                 with page.expect_download() as download:page.get_by_role('link',name='导出 PDF',exact=True).click()
                 demo=ROOT/'tmp/pdfs/report-demo-data.json';demo.parent.mkdir(parents=True,exist_ok=True);demo.write_text(json.dumps(page.request.get(url+'/api/v1/reports').json(),ensure_ascii=False))
                 path=ROOT/'output/pdf/student-report-demo.pdf';path.parent.mkdir(parents=True,exist_ok=True);download.value.save_as(path)
                 assert path.read_bytes().startswith(b'%PDF')
                 page.get_by_label('报告时间',exact=True).select_option('month');expect(page.get_by_text('小林 · 7年级上册数学 · 最近30天',exact=True)).to_be_visible()
+                # Add historical successes only to this disposable test DB,
+                # proving time alone yields review advice instead of a failure.
+                with connect(db_path) as db:
+                    for i,q in enumerate(verified_pool(db)['m7a:absolute'][:5]):
+                        stamp=(datetime.now(timezone.utc)-timedelta(days=40-i//3)).isoformat()
+                        db.execute("INSERT INTO attempts(id,student_id,question_id,status,assigned_at,submitted_at,answer,result) VALUES(?,'demo',?,'submitted',?,?,?,?)",
+                            (str(uuid.uuid4()),q['id'],stamp,stamp,q['answer'],dumps({'correct':True,'evidence_weight':1,'assisted':False})))
+                page.get_by_label('报告时间',exact=True).select_option('all')
+                expect(page.get_by_role('heading',name='值得再检查一下',exact=True)).to_be_visible()
+                expect(page.get_by_text('建议复测',exact=True)).to_be_visible()
+                expect(page.get_by_text('已结合学习证据',exact=True)).to_be_visible(timeout=15000)
+                page.screenshot(path=PREVIEWS/'preview-memory-review-desktop.png',full_page=True,animations='disabled')
+                page.set_viewport_size({'width':390,'height':844})
+                assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                page.screenshot(path=PREVIEWS/'preview-memory-review-mobile.png',full_page=True,animations='disabled')
+                with page.expect_download() as download:page.get_by_role('link',name='导出 PDF',exact=True).click()
+                download.value.save_as(ROOT/'output/pdf/memory-review-demo.pdf')
                 page.get_by_role('button',name='学习设置',exact=True).click();page.get_by_label('年级',exact=True).select_option('8');page.get_by_role('button',name='保存学习阶段',exact=True).click()
                 expect(page.get_by_text('小林 · 8年级上册 · 数学',exact=True)).to_be_visible();expect(page.get_by_role('heading',name='先从一个问题开始。')).to_be_visible()
                 assert page.request.get(url+'/api/v1/teacher/threads').json()['items']==[]
@@ -144,7 +166,7 @@ def main():
                 expect(page.get_by_role('heading',name='先从一个问题开始。')).to_be_visible();assert page.request.get(url+'/api/v1/study/home').json()['completed']==0
                 assert page.request.get(url+'/api/v1/teacher/threads').json()['items']==[]
                 assert not errors,errors;browser.close()
-            print('当前界面验收通过：零题答疑、拍照问题、自动学习线索、即时问答保留草稿、识图导入核对、AI学情/PDF导出、阶段及账号隔离、390px布局。')
+            print('当前界面验收通过：零题答疑、拍照问题、自动学习线索、即时问答保留草稿、识图导入核对、AI学情/PDF导出、记忆到期复测提示、阶段及账号隔离、390px布局。')
         finally:process.terminate();process.wait(timeout=10);server.shutdown();server.server_close()
 
 

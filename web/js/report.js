@@ -230,6 +230,19 @@ export function createReportUI(ui) {
       ),
       chapters(),
       trend(),
+      data.review_queue?.length
+        ? el(
+            "section",
+            { class: "card" },
+            el("h2", {}, "值得再检查一下"),
+            el(
+              "p",
+              { class: "subtle" },
+              "这些题型距上次独立验证较久。建议用新题复测，不表示已经不会。",
+            ),
+            data.review_queue.map((t) => el("p", {}, t.name)),
+          )
+        : null,
       el(
         "section",
         { class: "card report-analysis" },
@@ -340,9 +353,7 @@ export function createReportUI(ui) {
                 el(
                   "span",
                   { class: "badge" },
-                  t.independent_count >= 5
-                    ? t.status
-                    : t.learning_status || t.status,
+                  t.current_status || t.learning_status || t.status,
                 ),
               ),
             )

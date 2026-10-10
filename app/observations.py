@@ -84,7 +84,7 @@ def save(db, proposals, message_id, student_text, source='conversation', validat
 
 
 def active(db):
-    return [{'id':r['id'],**json.loads(r['data']),'created_at':r['created_at']} for r in db.execute('SELECT * FROM learning_observations WHERE student_id=current_student() AND book_id=? AND dismissed=0 ORDER BY created_at,id',(book_id(),))]
+    return [{'id':r['id'],**json.loads(r['data']),'message_id':r['message_id'],'created_at':r['created_at']} for r in db.execute('SELECT * FROM learning_observations WHERE student_id=current_student() AND book_id=? AND dismissed=0 ORDER BY created_at,id',(book_id(),))]
 
 
 def augment(db, groups):
@@ -93,16 +93,9 @@ def augment(db, groups):
         tid=note['type_id']
         group=groups.setdefault(tid,{'id':tid,'name':note['type_name'],'unit_id':GOALS[note['goal_id']]['unit_id'] if note.get('goal_id') in GOALS else None,
                                     'can_do':note.get('definition',''),'evidence':[],'recorded':0})
-        group.setdefault('learning_notes',[]).append(note)
+        group.setdefault('_all_learning_notes',[]).append(note)
     for group in groups.values():
-        all_notes=group.get('learning_notes',[])
-        notes=all_notes[-5:]
-        label='正在了解'
-        if notes:
-            substantive=[n for n in all_notes if n['kind']!='question_interest']
-            kind=(substantive or notes)[-1]['kind']
-            label={'difficulty':'需要巩固','self_report':'待确认','question_interest':'正在了解','guided_success':'正在理解','understanding_check':'待独立验证','reviewed_success':'待独立验证'}[kind]
-        group.update(learning_notes=notes,observation_count=sum(n['type_id']==group['id'] for n in items),learning_status=label if notes else None)
+        group['observation_count']=len(group.get('_all_learning_notes',[]))
     return groups
 
 

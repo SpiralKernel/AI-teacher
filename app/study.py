@@ -8,7 +8,7 @@ from collections import defaultdict
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from app import ai_policy, bank, bank_ai, learning
+from app import ai_policy, bank, bank_ai, learning, memory
 from app.course_catalog import BOOK_MAP
 from app.db import connect, dumps, now, replenish
 import uuid
@@ -38,7 +38,8 @@ def question_types(db, q):
     return result
 
 
-def state(db):
+def state(db, at=None):
+    at = at or memory.clock()
     groups = {t['id']:{**t,'evidence':[],'recorded':0} for t in TYPES} if book_id() == 'math-7-1' else {}
     completed = 0
     pool = verified_pool(db) if book_id() == 'math-7-1' else {}
@@ -73,10 +74,9 @@ def state(db):
     augment(db,groups)
     output=[]
     for group in groups.values():
-        unique={}
-        for e in group['evidence']:
-            unique.setdefault(e['identity'],e)
-        evidence=sorted(unique.values(),key=lambda e:e['time'])
+        evidence=memory.valid_evidence(group['evidence'],at)
+        group['evidence']=evidence
+        memory.apply(group,at)
         n=len(evidence)
         recent=evidence[-5:]
         errors=sum(not e['correct'] for e in recent)
@@ -89,8 +89,15 @@ def state(db):
                 '表现还有波动，再练几题确认。' if n else '先从题库练习，了解这一题型。')
         last_chat=db.execute('SELECT MAX(created_at) FROM study_messages WHERE student_id=current_student() AND book_id=? AND type_id=?',(book_id(),group['id'])).fetchone()[0]
         retest=[e for e in evidence if last_chat and e['time']>last_chat]
-        output.append({**{k:v for k,v in group.items() if k!='evidence'},'independent_count':n,'status':label,'reason':reason,
-                       'ai_ready':weak,'evidence':evidence[-8:],'retest_count':len(retest),'has_coaching':bool(last_chat)})
+        if group['review']['due']:
+            reason='上次有效验证距今较久，建议用一道新题复测；历史表现仍保留。'
+        item={**{k:v for k,v in group.items() if k!='evidence'},'independent_count':n,'status':label,'reason':reason,
+              'ai_ready':weak and not group['review']['due'],'evidence':evidence[-8:],
+              'retest_count':len(retest),'has_coaching':bool(last_chat)}
+        item['current_status']=memory.current_status(item)
+        if item['current_status']=='待独立验证':
+            item['reason']='历史独立表现较稳定，但有新的具体困难线索，需要独立新题检查。'
+        output.append(item)
     return {'book_id':book_id(),'completed':completed,'minimum_per_type':MINIMUM,'types':output,
             'note':'题型状态采用保守规则，尚未校准为能力评分。重复题、提示作答和 AI 评阅不计入独立核验题量；来源未核验的作答保留记录。'}
 
@@ -149,10 +156,15 @@ def create_router(settings):
                 basic=[t for t in options if any(q['difficulty']<3 for q in pools[t['id']])]
                 challenge=[t for t in options if any(q['difficulty']==3 for q in pools[t['id']])]
                 choices=(challenge if challenge and body.allow_challenge and random.random()<.15 else basic) or options
-                counts={t['id']:t['independent_count'] for t in state(db)['types']}
+                profile={t['id']:t for t in state(db)['types']}
+                due=[t for t in choices if profile[t['id']]['review']['due']]
+                if due:
+                    earliest=min(profile[t['id']]['review']['due_at'] for t in due)
+                    choices=[t for t in due if profile[t['id']]['review']['due_at']==earliest]
+                counts={tid:t['independent_count'] for tid,t in profile.items()}
                 least=min(counts.get(t['id'],0) for t in choices)
                 t=random.choice([t for t in choices if counts.get(t['id'],0)==least])
-                candidates=pools[t['id']]
+                candidates=[q for q in pools[t['id']] if body.allow_challenge or q['difficulty']<3]
                 counts={r['question_id']:r['n'] for r in db.execute("SELECT question_id,COUNT(*) n FROM attempts WHERE student_id=current_student() GROUP BY question_id")}
                 least=min(counts.get(q['id'],0) for q in candidates)
                 q=random.choice([q for q in candidates if counts.get(q['id'],0)==least])

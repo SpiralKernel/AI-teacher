@@ -10,12 +10,13 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import Literal
 
-from app import ai_policy, bank, bank_ai, learning, materials, observations, observation_guard
+from app import ai_policy, bank, bank_ai, learning, materials, memory, observations, observation_guard
 from app.course_catalog import BOOK_MAP
 from app.db import connect, dumps, now
 from app.identity import book_id
-from app.math_catalog import TYPES
+from app.math_catalog import TYPES, resolve_type
 from app.observations import Observation
+from app.question_types import template_type_id
 
 
 class Context(BaseModel):
@@ -63,7 +64,7 @@ def resolve_context(db, value):
     if value.source=='verified':
         if book_id()!='math-7-1':raise HTTPException(403,'该题不在当前学习阶段')
         row,q=learning.get_attempt(db,value.attempt_id)
-        result={'source':'verified','attempt_id':row['id'],'stem':q['stem'],'submitted':row['status']=='submitted','type_id':None}
+        result={'source':'verified','attempt_id':row['id'],'stem':q['stem'],'submitted':row['status']=='submitted','type_id':resolve_type(template_type_id(q))}
         if row['status']=='submitted':result.update(answer=row['answer'],reference=q['answer'],steps=q['steps'])
         return result
     if value.source=='bank':
@@ -128,10 +129,15 @@ def create_router(settings):
         with connect(settings.database_path) as db:
             row=require_thread(db,thread_id)
             messages=[{'id':r['id'],'message':r['message'],'response':json.loads(r['response']),'created_at':r['created_at']} for r in db.execute('SELECT * FROM teacher_messages WHERE thread_id=? ORDER BY created_at,id',(thread_id,))]
+            from app.study import state
+            current_notes={n['id']:n for t in state(db)['types'] for n in t.get('memory_history',[])}
             for message in messages:
                 for note in message['response'].get('observations',[]):
                     stored=db.execute('SELECT dismissed FROM learning_observations WHERE id=? AND student_id=current_student()',(note['id'],)).fetchone()
                     note['dismissed']=bool(not stored or stored[0])
+                    current=current_notes.get(note['id'])
+                    if current:
+                        note.update({k:current.get(k) for k in ('memory_status','resolved_at','resolved_by','superseded_by','expires_at','freshness')})
         return {'id':row['id'],'title':row['title'],'context':json.loads(row['context']),'items':messages}
 
     @router.post('/observations/{observation_id}/dismiss')
@@ -188,10 +194,9 @@ def create_router(settings):
                     raise HTTPException(429,'这段讨论较长，请新开一次提问')
                 from app.study import state
                 summary=state(db)
-                current_types=[{k:t.get(k) for k in ('id','name','can_do','status','learning_status','independent_count','learning_notes')} for t in summary['types'] if t.get('recorded') or t.get('observation_count')]
-                current_types=current_types[-16:]
-                for item in current_types:
-                    item['learning_notes']=[{k:n.get(k) for k in ('kind','note','evidence_quote','policy_version','validation')} for n in (item.get('learning_notes') or [])[-2:]]
+                recalled=memory.retrieve(summary['types'],body.message+' '+body.student_draft+' '+(context or {}).get('stem',''),
+                    focus_type_id=body.type_id or (context or {}).get('type_id'))
+                current_types=recalled['items']
                 catalog=[{'id':t['id'],'name':t['name'],'definition':t['can_do'],'goal_id':t['goal_id']} for t in TYPES] if book_id()=='math-7-1' else []
                 book=BOOK_MAP[book_id()]
                 catalog += [{'id':r['id'],'name':json.loads(r['data'])['name'],'definition':json.loads(r['data']).get('description','')} for r in db.execute("SELECT id,data FROM question_types WHERE subject='math' AND grade=? AND term=? AND json_extract(data,'$.source')='ai' LIMIT 80",(book['grade'],book['term']))]
@@ -205,7 +210,7 @@ def create_router(settings):
             material_context={'book_id':book_id(),'grade':book['grade'],'term':book['term'],
                 'stage_goals':stage_goals,'type_catalog':catalog,'student_state':current_types,
                 'current_question':context,'focus_type_id':body.type_id,'last_check':last_check,
-                'image_confirmed':bool(confirmed_image)}
+                'image_confirmed':bool(confirmed_image),'memory_context':recalled}
             history=[]
             for item in reversed(previous):
                 answer=json.loads(item['response'])
