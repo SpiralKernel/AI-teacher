@@ -43,7 +43,7 @@ def initialize(path: Path):
         path.chmod(0o600)
         db.execute("PRAGMA journal_mode = WAL")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version > 9:
+        if version > 10:
             raise RuntimeError("数据库版本高于应用支持版本，拒绝降级打开。")
         if version == 0:
             db.executescript("""
@@ -228,6 +228,17 @@ def initialize(path: Path):
                 PRAGMA user_version=9;
                 COMMIT;
             """)
+        if version < 10:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS registration_invites(
+                    code_hash TEXT PRIMARY KEY,created_at TEXT NOT NULL,
+                    consumed_at TEXT,used_by TEXT REFERENCES students(id),
+                    CHECK((consumed_at IS NULL AND used_by IS NULL) OR
+                          (consumed_at IS NOT NULL AND used_by IS NOT NULL)));
+                PRAGMA user_version=10;
+                COMMIT;
+            """)
         columns={r[1] for r in db.execute('PRAGMA table_info(imports)')}
         if 'book_id' not in columns:
             db.execute("ALTER TABLE imports ADD COLUMN book_id TEXT NOT NULL DEFAULT 'math-7-1'")
@@ -250,7 +261,7 @@ def replenish(db, minimum: int = 6) -> int:
     """为演示学生补足未做题；最多尝试 400 个参数，防止有限题型耗尽时死循环。"""
     added = 0
     for node in NODES:
-        available = db.execute("""SELECT COUNT(*) FROM questions q WHERE knowledge_id=? AND json_extract(q.data,'$.difficulty')<3 AND NOT EXISTS
+        available = db.execute("""SELECT COUNT(*) FROM questions q WHERE knowledge_id=? AND json_extract(q.data,'$.difficulty')<3 AND json_extract(q.data,'$.provenance.family') IS NULL AND NOT EXISTS
             (SELECT 1 FROM attempts a WHERE a.question_id=q.id AND a.student_id=current_student() AND a.status='submitted')""",
                                (node["id"],)).fetchone()[0]
         needed = max(0, minimum - available)
@@ -281,6 +292,8 @@ def replenish(db, minimum: int = 6) -> int:
             needed -= cursor.rowcount
             if needed <= 0:break
         db.execute("UPDATE challenge_state SET next_index=? WHERE knowledge_id=?", (index, node["id"]))
+    from app.foundations import replenish_foundations
+    added += replenish_foundations(db)
     if added:
         audit(db, "verified_question_replenishment", {"added": added, "template_version": "1"})
     return added

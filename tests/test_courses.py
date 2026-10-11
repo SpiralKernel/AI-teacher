@@ -226,7 +226,7 @@ def test_version_four_migration_preserves_answers(setup):
         db.execute("PRAGMA user_version=4")
     initialize(settings.database_path)
     with connect(settings.database_path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 10
         assert json.loads(db.execute("SELECT result FROM bank_attempts WHERE id=?", (a["attempt_id"],)).fetchone()[0]) == result
         assert db.execute("SELECT COUNT(*) FROM course_question_links").fetchone()[0] > 0
 

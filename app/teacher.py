@@ -246,7 +246,7 @@ def create_router(settings):
                 db.execute('BEGIN IMMEDIATE')
                 if thread:require_thread(db,thread_id)
                 else:db.execute('INSERT INTO teacher_threads VALUES(?,current_student(),?,?,?,?,?)',(thread_id,book_id(),body.message[:40],dumps(saved_context.model_dump()),timestamp,timestamp))
-                result={**reply.model_dump(exclude={'observations'}),'thread_id':thread_id,'message_id':message_id,'provider':'deepseek','score_recorded':False,'observations':[],
+                result={**reply.model_dump(exclude={'observations'}),'thread_id':thread_id,'message_id':message_id,'provider':settings.ai_provider,'score_recorded':False,'observations':[],
                         'policy_version':ai_policy.VERSION,'request_fingerprint':fingerprint,'student_draft':body.student_draft,
                         'state_update':{'accepted':0,'rejected':rejected,
                             'review_unavailable':any(r['reason']=='review_unavailable' for r in rejected)},

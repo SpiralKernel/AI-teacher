@@ -27,7 +27,7 @@ def stored(settings, qid):
 def test_map_covers_all_original_types_without_claiming_external_review(setup):
     client, settings = setup
     initial = client.get('/api/v1/math/coverage').json()
-    assert initial['summary']=={'types':37,'with_verified_questions':26,'diagnosable':14,'missing_verified':11,'unassessed':37}
+    assert initial['summary']=={'types':37,'with_verified_questions':37,'diagnosable':25,'missing_verified':0,'unassessed':37}
     assert len(LEGACY_MAP)==len(BASE_TYPES)+len(CHALLENGE_TYPES)
     assert len({t['id'] for t in TYPES})==37
     assert all(resolve_type('',alias)==t['id'] for t in TYPES for alias in t['aliases'])
@@ -38,8 +38,9 @@ def test_map_covers_all_original_types_without_claiming_external_review(setup):
             'knowledge_tags':['科学记数法'],'type_tags':['选择题'],'tags_source':'source','provenance':{'dataset':'test'}}],{})
     value = client.get('/api/v1/math/coverage').json()
     t = next(t for t in value['types'] if t['id']=='m7a:scientific')
-    assert t['candidate_goal_questions']==1 and t['verified_questions']==0 and t['status']=='待诊断'
-    assert client.post('/api/v1/math/practice',json={'type_id':t['id']}).status_code==404
+    assert t['candidate_goal_questions']==1 and t['verified_questions']>=18 and t['status']=='待诊断'
+    assert len(t['verified_structures'])==3
+    assert client.post('/api/v1/math/practice',json={'type_id':t['id']}).status_code==200
 
 
 def test_registry_reuses_alias_and_keeps_unknown_ai_types_pending(setup):
@@ -135,7 +136,7 @@ def test_diagnostic_persists_after_restart_and_keeps_old_records(setup):
         assert saved['answered']==1 and saved['current']['position']==1
         assert other.get('/api/v1/student').json()['completed']==1
         with connect(settings.database_path) as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0]==9
+            assert db.execute('PRAGMA user_version').fetchone()[0]==10
 
 
 def test_coverage_excludes_corrupt_and_unrecognized_question_sources(setup):
@@ -156,7 +157,7 @@ def test_coverage_excludes_corrupt_and_unrecognized_question_sources(setup):
 def test_unit_diagnostic_respects_limits_and_no_fake_questions(setup):
     client,_=setup
     s=client.post('/api/v1/math/diagnostics',json={'size':14,'unit_id':'math-7-1:u3'}).json()
-    assert s['total']==1 and s['current']['type_id']=='m7a:substitution'
+    assert s['total']==2 and {t['type_id'] for t in s['items']}=={'m7a:substitution','m7a:expression-model'}
     for body in ({'size':0},{'size':15},{'unit_id':"x' OR 1=1"}):
         assert client.post('/api/v1/math/diagnostics',json=body).status_code==422
     assert client.get('/api/v1/math/diagnostics/missing').status_code==404

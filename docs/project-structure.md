@@ -49,6 +49,7 @@ AI-teacher/
 | 要改的内容 | 主要文件 | 关联验证 |
 | --- | --- | --- |
 | 学生账号、会话、请求作用域身份 | `app/auth.py`、`app/identity.py`、`app/main.py` | `tests/test_student.py` |
+| 一次性邀请码、私密名单生成和原子消费 | `app/invites.py`、`app/auth.py`、`app/manage.py`、`app/db.py` | `tests/test_invites.py` |
 | 题库与可靠题型证据、复测 | `app/study.py`、`web/js/student.js`、`web/css/student.css` | `tests/test_student.py`、`scripts/browser_student.py` |
 | 自由答疑与可纠正的学习线索 | `app/teacher.py`、`app/observations.py`、`web/js/teacher.js` | `tests/test_teacher_reports.py` |
 | 学生记忆生命周期、衰减、相关检索和复测调度 | `app/memory.py`、`app/study.py`、`app/reports.py` | `tests/test_memory.py`、`scripts/eval_memory.py` |
@@ -63,6 +64,8 @@ AI-teacher/
 | 目标与题目候选映射、目标证据、AI阶段上下文 | `app/courses.py` | `tests/test_courses.py` |
 | 原数学地图、目标依赖 | `app/curriculum.py` | `tests/test_learning.py` |
 | 原创题与挑战题生成、精确校验 | `app/questions.py`、`app/challenges.py` | `tests/test_learning.py`、`tests/test_question_types.py` |
+| 七上新增基础题、正方体展开图与按子结构补题 | `app/foundations.py` | `tests/test_foundations.py` |
+| 数值、一次代数式、科学记数法和近似数判等 | `app/answers.py` | `tests/test_foundations.py` |
 | 全科题库、标签、筛选、选择判分、画像 | `app/bank.py` | `tests/test_bank.py` |
 | 外部题库适配与去重 | `app/datasets.py` | `tests/test_datasets.py` |
 | 数学细分候选标注、精确答案检查与隔离 | `app/math_quality.py` | `tests/test_math_quality.py` |
@@ -72,6 +75,7 @@ AI-teacher/
 | 图片/PDF导入、识别、核对 | `app/materials.py` | `tests/test_materials.py` |
 | 数据库迁移、初始化与模板补题 | `app/db.py` | 迁移与记录保留测试 |
 | 服务端配置、管理命令 | `app/config.py`、`app/manage.py` | 备份、导入、同步的已有测试 |
+| MiMo/DeepSeek参数适配、输出截断拒绝 | `app/config.py`、`app/ai_transport.py`、`app/bank_ai.py` | `tests/test_ai_config.py`、`tests/test_ai_guard.py` |
 
 后端模块目前在`app/`内按职责命名。新增业务应先放到对应模块；扩展到需要包目录时再按课程、题库、材料拆包，迁移时同步调整导入和测试。
 

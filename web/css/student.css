@@ -9,6 +9,14 @@
   --paper: #fff8f5;
   --orange: #3b3838;
 }
+.question-diagram {
+  display: block;
+  width: 220px;
+  max-width: 100%;
+  max-height: 280px;
+  margin: 16px auto;
+  font-size: 18px;
+}
 * {
   box-sizing: border-box;
 }

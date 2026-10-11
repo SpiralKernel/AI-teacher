@@ -11,7 +11,9 @@ from app.db import connect, initialize, replenish
 
 def main():
     parser = argparse.ArgumentParser(description="AI-teacher 数据维护")
-    parser.add_argument("command", choices=["sync", "backup", "stats", "import-bank"])
+    parser.add_argument("command", choices=["sync", "backup", "stats", "import-bank", "create-invites"])
+    parser.add_argument("--count", type=int, default=10, help="邀请码数量（1—100）")
+    parser.add_argument("--output", type=Path, help="邀请码私密文件路径，必须尚不存在")
     parser.add_argument("--dataset", choices=["tal", "cjeval", "ceval", "cmm", "math", "all"], default="all")
     parser.add_argument("--subject", choices=["math", "all"], default="all")
     parser.add_argument("--math-quality", action="store_true", help="补充数学细分题型、复核并隔离异常答案")
@@ -21,7 +23,13 @@ def main():
     settings = Settings()
     if args.command != "backup":
         initialize(settings.database_path)
-    if args.command == "import-bank":
+    if args.command == "create-invites":
+        from app.invites import create_invites
+        if args.output is None:
+            parser.error('create-invites 需要 --output 指定私密名单路径')
+        create_invites(settings.database_path, args.count, args.output)
+        print(f"已生成 {args.count} 个一次性邀请码：{args.output.resolve()}")
+    elif args.command == "import-bank":
         from app.bank import import_records
         from app.datasets import iter_dataset, source_manifest
         root=args.source_root or settings.database_path.parent/"sources"

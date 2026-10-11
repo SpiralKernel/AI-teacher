@@ -1,7 +1,7 @@
 """七上数学标准题型：固定ID、明确解题结构，与来源标签/教材进度分别维护。"""
 from app.question_types import BASE_TYPES, CHALLENGE_TYPES, normalize_name
 
-VERSION = "math-types-2026.10.1"
+VERSION = "math-types-2026.10.11"
 BOOK_ID = "math-7-1"
 
 

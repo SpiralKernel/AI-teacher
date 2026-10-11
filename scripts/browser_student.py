@@ -39,7 +39,7 @@ class MockAI(BaseHTTPRequestHandler):
         if '为家长生成' in system:
             value=json.loads(data['messages'][1]['content'])['learning_material'];notes=[e for e in value['evidence'] if e['id'] in value['focus_eligible_evidence_ids']]
             focus=[{'type_id':notes[-1]['type_id'],'finding':'对话与已核对练习显示，绝对值的距离含义还值得进一步检查。','evidence_ids':[notes[-1]['id']]}] if notes else []
-            content={'summary':f"本期有{value['summary']['questions']}次主动提问。请结合独立练习观察理解情况，提问本身不代表不会。",'strengths':[],'focus':focus,'parent_actions':['请孩子用数轴解释绝对值的含义。','先听推理，再核对答案。'],'next_steps':['独立尝试一道新的绝对值题。'],'uncertainty':'当前材料含对话和导入线索，不能替代充分的独立证据。'}
+            content={'summary':f"本期有{value['summary']['ai_questions']}次主动提问。请结合独立练习观察理解情况，提问本身不代表不会。",'strengths':[],'focus':focus,'parent_actions':['请孩子用数轴解释绝对值的含义。','先听推理，再核对答案。'],'next_steps':['独立尝试一道新的绝对值题。'],'uncertainty':'当前材料含对话和导入线索，不能替代充分的独立证据。'}
         elif '试卷识别助手' in system:
             content={'items':[{'label':'1','stem':'求-3的绝对值。','student_answer':'-3','reference_answer':'3','knowledge_ids':['absolute'],'question_type_id':'template:absolute','question_type_name':'负数的绝对值','suggested_verdict':'incorrect','confidence':'high','reason':'把距离写成了负数。','steps':['绝对值是到原点的距离。']}],'note':'已提取一道题。'}
         elif '独立的数学学习证据复核员' in system:
@@ -75,7 +75,9 @@ def main():
                 'knowledge_tags':['绝对值'],'type_tags':['负数的绝对值'],
                 'steps':['绝对值表示数轴上到原点的距离，-3到原点的距离是3。']}
         with connect(db_path) as db:bank.import_records(db,'browser',[q,choice],{})
-        env={**os.environ,'DATABASE_PATH':str(db_path),'AUTH_REQUIRED':'true','DEEPSEEK_API_KEY':'browser-test-only','DEEPSEEK_BASE_URL':f'http://127.0.0.1:{ai_port}'}
+        env={**os.environ,'DATABASE_PATH':str(db_path),'AUTH_REQUIRED':'true','AI_PROVIDER':'deepseek',
+             'AI_API_KEY':'browser-test-only','AI_BASE_URL':f'http://127.0.0.1:{ai_port}',
+             'AI_MODEL':'mock','AI_VISION_MODEL':'mock'}
         process=subprocess.Popen([str(ROOT/'.venv/bin/uvicorn'),'app.main:app','--host','127.0.0.1','--port',str(port),'--no-access-log'],cwd=ROOT,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         try:
             with httpx.Client(trust_env=False) as client:
@@ -113,6 +115,8 @@ def main():
                 page.get_by_label('向 AI 提问',exact=True).fill('模拟网络失败');page.get_by_role('button',name='发送问题',exact=True).click()
                 expect(page.get_by_role('alert')).to_contain_text('AI 请求未完成');expect(page.get_by_label('向 AI 提问',exact=True)).to_have_value('模拟网络失败')
                 page.get_by_role('button',name='新提问',exact=True).click()
+                # 这段固定验证绝对值的无效数值与求助草稿；不依赖随机练习首题。
+                page.route('**/api/v1/study/next',lambda route:route.continue_(post_data=json.dumps({**route.request.post_data_json,'type_id':'m7a:absolute'})))
                 page.get_by_role('tab',name='题库',exact=True).click();page.get_by_role('button',name='开始练习',exact=True).click()
                 expect(page.get_by_label('你的答案',exact=True)).to_be_visible();page.get_by_label('你的答案',exact=True).fill('-2')
                 page.get_by_role('button',name='问问 AI',exact=True).click();expect(page.get_by_role('dialog',name='这道题的 AI老师')).to_be_visible()
@@ -126,6 +130,7 @@ def main():
                 assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
                 page.screenshot(path=PREVIEWS/'preview-teacher-drawer-mobile.png',full_page=False,animations='disabled')
                 page.get_by_role('button',name='关闭问答',exact=True).click()
+                page.unroute('**/api/v1/study/next')
                 page.get_by_label('作答方式',exact=True).select_option('written');page.get_by_role('button',name='继续练习',exact=True).click()
                 expect(page.get_by_label('完整解答',exact=True)).to_be_visible();page.get_by_label('完整解答',exact=True).fill('由中点定义，AM=5。')
                 page.get_by_label('上传手写答案',exact=True).set_input_files({'name':'answer.png','mimeType':'image/png','buffer':png()});page.get_by_role('button',name='提交 AI 评阅',exact=True).click()
@@ -140,6 +145,27 @@ def main():
                 expect(page.get_by_text('参考答案：A. 3',exact=True)).to_be_visible()
                 assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
                 page.screenshot(path=PREVIEWS/'preview-bank-choice-mobile.png',full_page=True,animations='disabled')
+                # 真实学生接口分配新题，验证不同答案输入和SVG几何图；只有AI为模拟。
+                page.get_by_label('作答方式',exact=True).select_option('numeric')
+                target={'key':'expression-model'}
+                page.route('**/api/v1/study/next',lambda route:route.continue_(post_data=json.dumps({**route.request.post_data_json,'type_id':'m7a:'+target['key'],'allow_challenge':False})))
+                for key in ('expression-model','scientific','approximate','geometry'):
+                    target['key']=key
+                    with page.expect_response(lambda response:response.url.endswith('/api/v1/study/next')) as response:
+                        page.get_by_role('button',name='开始练习',exact=True).click()
+                    work=response.value.json();q=work['question']
+                    print('新题型界面：'+key+' / '+q['answer_mode'],flush=True)
+                    expect(page.get_by_label('你的答案',exact=True)).to_be_visible()
+                    if key=='geometry':
+                        expect(page.locator('.question-diagram rect')).to_have_count(6)
+                        page.screenshot(path=PREVIEWS/'preview-foundation-net-mobile.png',full_page=True,animations='disabled')
+                    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                    with connect(db_path) as db:stored=json.loads(db.execute('SELECT data FROM questions WHERE id=?',(q['id'],)).fetchone()[0])
+                    value=f"({stored['answer']})+0" if key=='expression-model' else stored['answer']
+                    page.get_by_label('你的答案',exact=True).fill(value)
+                    page.get_by_role('button',name='提交答案',exact=True).click()
+                    expect(page.get_by_role('heading',name='这道题答对了。')).to_be_visible()
+                page.unroute('**/api/v1/study/next')
                 page.get_by_role('tab',name='AI老师',exact=True).click();page.get_by_role('button',name='导入练习',exact=False).click();expect(page.get_by_role('heading',name='题目不用重新抄。')).to_be_visible()
                 page.get_by_label('选择练习图片或PDF',exact=True).set_input_files({'name':'paper.png','mimeType':'image/png','buffer':png()});page.get_by_role('button',name='上传并预览',exact=True).click();page.get_by_role('button',name='开始识图',exact=True).click()
                 expect(page.get_by_label('第1题题干',exact=True)).to_be_visible(timeout=15000);page.get_by_label('第1题评价',exact=True).select_option('incorrect');page.get_by_text('我已核对这道题',exact=True).click();page.get_by_role('button',name='保存核对结果',exact=True).click()

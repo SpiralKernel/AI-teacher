@@ -25,6 +25,8 @@ def normalize_name(name):
 
 
 def template_type_id(q):
+    if q.get('provenance', {}).get('family') == 'foundations':
+        return q['question_type']
     if q.get("provenance", {}).get("kind") == "original_challenge_template":
         return "challenge:" + q["knowledge_id"]
     key = q["knowledge_id"]
@@ -41,6 +43,15 @@ def ensure_templates(db):
                     "knowledge_ids": [knowledge], "source": "template", "needs_review": False}
             db.execute("INSERT OR IGNORE INTO question_types(id,subject,grade,term,normalized_name,data) VALUES(?,'math',7,1,?,?)",
                        (data["id"], normalize_name(name), json.dumps(data, ensure_ascii=False)))
+    from app.foundations import CATALOG
+    from app.math_catalog import TYPE_MAP
+    for key, (knowledge, structures) in CATALOG.items():
+        target = TYPE_MAP['m7a:'+key]
+        data = {'id':target['id'],'name':target['name'],'description':target['can_do'],
+                'subject':'math','grade':7,'term':1,'knowledge_ids':[knowledge],
+                'source':'template','needs_review':False,'structures':list(structures)}
+        db.execute("INSERT INTO question_types VALUES(?,'math',7,1,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+                   (target['id'],normalize_name(target['name']),json.dumps(data,ensure_ascii=False)))
 
 
 def register_ai_type(db, item, import_id):

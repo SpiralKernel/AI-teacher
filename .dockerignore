@@ -1,0 +1,12 @@
+*
+!Dockerfile
+!deploy/
+!deploy/requirements.txt
+!app/
+!app/**
+!web/
+!web/**
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*

@@ -23,6 +23,7 @@ from app.db import audit, connect, dumps, now
 from app.identity import book_id, scope
 from app.question_types import register_ai_type
 from app import ai_policy
+from app.ai_transport import completion_content
 
 MAX_FILE = 20 * 1024 * 1024
 MAX_TOTAL = 40 * 1024 * 1024
@@ -275,9 +276,9 @@ async def recognize_page(settings, image: bytes, mode):
                                                "messages": ai_policy.messages(system,
                                                    {'knowledge_catalog':catalog,'type_catalog':type_catalog,'stage_goals':goals},
                                                    content=[{"type":"text","text":instruction},{"type":"image_url","image_url":{"url":data_url}}]),
-                                               "max_tokens": 6500, "stream": False, "response_format": {"type": "json_object"}})
+                                               **settings.completion_options(6500), "stream": False, "response_format": {"type": "json_object"}})
         response.raise_for_status()
-        result = PageRecognition.model_validate_json(response.json()["choices"][0]["message"]["content"])
+        result = PageRecognition.model_validate_json(completion_content(response.json()))
         valid_goals={g['id'] for g in goals}
         for item in result.items:
             item.goal_ids=[g for g in item.goal_ids if g in valid_goals]
@@ -293,7 +294,7 @@ async def recognize_page(settings, image: bytes, mode):
         return result
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
-        message = "DeepSeek Key 无效，请检查服务端配置" if status in {401,403} else "DeepSeek 余额不足，请检查账户" if status == 402 else "DeepSeek 正在限流，请稍后重试" if status == 429 else "识图接口暂不可用，请检查视觉模型配置或稍后重试"
+        message = "AI Key 无效，请检查服务端配置" if status in {401,403} else "AI 账户余额不足，请检查账户" if status == 402 else "AI 正在限流，请稍后重试" if status == 429 else "识图接口暂不可用，请检查视觉模型配置或稍后重试"
         raise ValueError(message) from exc
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
         raise ValueError("识图请求超时或返回格式不完整，请重试或减少每次导入页数") from exc
@@ -397,7 +398,7 @@ def confirm_import(db, import_id, body: Confirmation):
 
 async def discuss_item(settings, item, message, previous, summary, confirmed):
     if not settings.deepseek_api_key:
-        raise HTTPException(503, "拍照题目的自由问答需要配置 DeepSeek Key")
+        raise HTTPException(503, "拍照题目的自由问答需要配置 AI Key")
     context = {"question": item["stem"], "diagram_description": item["diagram_description"],
                "student_answer": item["student_answer"], "knowledge_ids": item["knowledge_ids"],
                "student_summary": summary, "confirmed": confirmed}
@@ -419,10 +420,10 @@ async def discuss_item(settings, item, message, previous, summary, confirmed):
         async with httpx.AsyncClient(timeout=settings.ai_timeout_seconds) as client:
             response = await client.post(settings.deepseek_base_url.rstrip("/") + "/chat/completions",
                                          headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
-                                         json={"model": settings.deepseek_model, "messages": messages, "max_tokens": 1800,
+                                         json={"model": settings.deepseek_model, "messages": messages, **settings.completion_options(1800),
                                                "stream": False, "response_format": {"type": "json_object"}})
         response.raise_for_status()
-        value = TutorContent.model_validate_json(response.json()["choices"][0]["message"]["content"])
-        return {**value.model_dump(), "provider": "deepseek", "notice": "本题讨论不会自动修改已确认的学习评价。"}
+        value = TutorContent.model_validate_json(completion_content(response.json()))
+        return {**value.model_dump(), "provider": settings.ai_provider, "notice": "本题讨论不会自动修改已确认的学习评价。"}
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
         raise HTTPException(502, "AI 暂时无法完成讲解，请稍后重试") from exc

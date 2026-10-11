@@ -1,0 +1,57 @@
+name: ai-teacher
+services:
+  app:
+    image: ${AI_TEACHER_IMAGE:?Set AI_TEACHER_IMAGE}
+    restart: unless-stopped
+    env_file: runtime.env
+    environment:
+      DATABASE_PATH: /app/data/ai-teacher.sqlite3
+      AUTH_REQUIRED: "true"
+      REGISTRATION_ENABLED: "true"
+      REGISTRATION_REQUIRES_INVITE: "true"
+    volumes:
+      - ./data:/app/data:Z
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    mem_limit: 512m
+    memswap_limit: 768m
+    cpus: 0.75
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/api/v1/health',timeout=5)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "3"}
+  proxy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    environment:
+      SITE_HOST: ${SITE_HOST:?Set SITE_HOST}
+      GOMEMLIMIT: 64MiB
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,Z
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app: {condition: service_healthy}
+    mem_limit: 128m
+    memswap_limit: 192m
+    cpus: 0.25
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "3"}
+volumes:
+  caddy_data:
+  caddy_config:

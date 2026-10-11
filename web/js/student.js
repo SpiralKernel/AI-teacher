@@ -177,7 +177,9 @@ import { createReportUI } from "./report.js";
   async function load() {
     const session = await api("/auth/session");
     S.student = session.student;
-    S.authMode = session.needs_setup ? "register" : "login";
+    S.registrationEnabled = session.registration_enabled !== false;
+    S.inviteRequired = session.registration_requires_invite === true;
+    S.authMode = session.needs_setup && S.registrationEnabled ? "register" : "login";
     S.needsSetup = session.needs_setup;
     if (S.student) S.home = await api("/study/home");
     render();
@@ -237,6 +239,7 @@ import { createReportUI } from "./report.js";
       maxLength: 30,
       placeholder: "你希望怎样被称呼？",
     });
+    const invite = el("input", {type: "text", required: S.inviteRequired, maxlength: 128, autocomplete: "off", placeholder: "输入一次性邀请码"});
     const stage = stageFields();
     const form = el(
       "form",
@@ -248,6 +251,7 @@ import { createReportUI } from "./report.js";
             if (register)
               Object.assign(body, stage.get(), {
                 nickname: nickname.value.trim() || "学习者",
+                invitation_code: invite.value.trim(),
               });
             await api(register ? "/auth/register" : "/auth/login", body);
             password.value = "";
@@ -258,6 +262,7 @@ import { createReportUI } from "./report.js";
       field("用户名", name),
       field("密码", password),
       register ? field("称呼", nickname) : null,
+      register && S.inviteRequired ? field("邀请码（仅可使用一次）", invite) : null,
       register ? stage.node : null,
       register && S.needsSetup
         ? el(
@@ -316,14 +321,14 @@ import { createReportUI } from "./report.js";
             },
             !register ? "badge" : "quiet",
           ),
-          btn(
+          S.registrationEnabled ? btn(
             "新建学生",
             () => {
               S.authMode = "register";
               render();
             },
             register ? "badge" : "quiet",
-          ),
+          ) : null,
         ),
         form,
       ),
@@ -516,8 +521,35 @@ import { createReportUI } from "./report.js";
           w.type_name || "独立完成，才能看清掌握情况",
         ),
       ),
-      el("div", { class: "question-stem" }, q.stem),
+      el("div", { class: "question-stem" }, q.diagram?.kind === "square_grid" ? q.stem.split("图形位置：")[0] : q.stem),
     );
+    if (q.diagram?.kind === "square_grid") {
+      const cells = q.diagram.cells;
+      const size = 48;
+      const width = (Math.max(...cells.map((c) => c.x)) + 1) * size + 8;
+      const height = (Math.max(...cells.map((c) => c.y)) + 1) * size + 8;
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", "正方体展开图，面的位置也列在题干中");
+      svg.classList.add("question-diagram");
+      for (const cell of cells) {
+        const rect = document.createElementNS(svg.namespaceURI, "rect");
+        for (const [key, value] of Object.entries({ x: cell.x * size + 4, y: cell.y * size + 4, width: size, height: size, fill: "#F5E2DA", stroke: "#3B3838" }))
+          rect.setAttribute(key, String(value));
+        const label = document.createElementNS(svg.namespaceURI, "text");
+        label.setAttribute("x", String(cell.x * size + size / 2 + 4));
+        label.setAttribute("y", String(cell.y * size + size / 2 + 4));
+        label.setAttribute("text-anchor", "middle");
+        label.setAttribute("dominant-baseline", "central");
+        label.setAttribute("fill", "#3B3838");
+        label.textContent = cell.label;
+        svg.append(rect, label);
+      }
+      node.append(svg, el("p", { class: "tiny" }, q.diagram.caption));
+      const positions = q.stem.split("图形位置：")[1];
+      if (positions) node.append(el("details", { class: "tiny" }, el("summary", {}, "查看图形位置说明"), el("p", {}, positions)));
+    }
     node.append(
       btn(
         "问问 AI",
@@ -577,14 +609,14 @@ import { createReportUI } from "./report.js";
       );
       return node;
     }
-    if (q.answer_mode === "numeric") {
+    if (["numeric", "expression", "scientific", "decimal"].includes(q.answer_mode)) {
       const input = el("input", {
         "aria-label": "你的答案",
         value: S.answer,
         maxLength: 64,
         required: true,
         autocomplete: "off",
-        placeholder: "填写数值，例如 -3 或 1/2",
+        placeholder: { expression: "填写代数式，例如 3x+2", scientific: "例如 3.2×10^5 或 3.2e5", decimal: "保留题目要求的小数位数" }[q.answer_mode] || "填写数值，例如 -3 或 1/2",
         onInput: (e) => (S.answer = e.target.value),
       });
       node.append(

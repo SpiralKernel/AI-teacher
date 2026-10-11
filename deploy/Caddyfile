@@ -1,0 +1,7 @@
+{$SITE_HOST} {
+    request_body {
+        max_size 41MB
+    }
+    encode gzip
+    reverse_proxy app:8010
+}

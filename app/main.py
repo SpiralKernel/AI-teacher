@@ -117,6 +117,7 @@ def create_app(settings: Settings | None = None):
         with connect(settings.database_path) as db:
             count = db.execute("SELECT COUNT(*) FROM questions").fetchone()[0]
         return {"status": "ok", "ai_configured": bool(settings.deepseek_api_key),
+                "provider": settings.ai_provider,
                 "model": settings.deepseek_model, "question_count": count,
                 "curriculum_version": VERSION, "mode": "student_accounts" if settings.auth_required else "local_single_student"}
 
@@ -163,7 +164,7 @@ def create_app(settings: Settings | None = None):
     @app.post("/api/v1/imports/{import_id}/recognize", status_code=202)
     def recognize_material(import_id: str, background_tasks: BackgroundTasks):
         if not settings.deepseek_api_key:
-            raise HTTPException(503, "请先在服务端配置 DeepSeek Key，再进行识图")
+            raise HTTPException(503, "请先在服务端配置 AI Key，再进行识图")
         with connect(settings.database_path) as db:
             db.execute("BEGIN IMMEDIATE")
             row = materials.require_import(db, import_id)

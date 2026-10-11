@@ -28,6 +28,7 @@ class Stage(BaseModel):
 
 class Registration(Credentials, Stage):
     nickname: str = Field(default='学习者', min_length=1, max_length=30)
+    invitation_code: str = Field(default='', max_length=128)
 
 
 def username(value):
@@ -68,15 +69,25 @@ def create_router(settings):
     def status():
         with connect(settings.database_path) as db:
             needs_setup = db.execute('SELECT COUNT(*) FROM accounts').fetchone()[0] == 0
-        return {'authenticated': bool(scope()), 'student': scope(), 'needs_setup': needs_setup}
+        return {'authenticated': bool(scope()), 'student': scope(), 'needs_setup': needs_setup,
+                'registration_enabled': settings.registration_enabled,
+                'registration_requires_invite': settings.registration_requires_invite}
 
     @router.post('/register', status_code=201)
     def register(body: Registration, request: Request, response: Response):
+        if not settings.registration_enabled:
+            raise HTTPException(403, '当前学习空间只允许已有学生登录')
         name = username(body.username)
         salt = secrets.token_hex(16)
         hashed = password_hash(body.password, salt)
         with connect(settings.database_path) as db:
             db.execute('BEGIN IMMEDIATE')
+            invite_hash = None
+            if settings.registration_requires_invite:
+                from app.invites import code_hash
+                invite_hash = code_hash(body.invitation_code)
+                if not db.execute('SELECT 1 FROM registration_invites WHERE code_hash=? AND consumed_at IS NULL', (invite_hash,)).fetchone():
+                    raise HTTPException(403, '请输入有效且未使用的邀请码')
             if db.execute('SELECT 1 FROM accounts WHERE username=?', (name,)).fetchone():
                 raise HTTPException(409, '该用户名已存在')
             first = db.execute('SELECT COUNT(*) FROM accounts').fetchone()[0] == 0
@@ -87,6 +98,10 @@ def create_router(settings):
                 db.execute('INSERT INTO students VALUES(?,?,?)', (owner, body.nickname.strip() or '学习者', now()))
             db.execute('INSERT INTO accounts VALUES(?,?,?,?,?)', (name, owner, salt, hashed, now()))
             db.execute('INSERT INTO student_scopes VALUES(?,?,?)', (owner, body.grade, body.term))
+            if invite_hash:
+                changed = db.execute('UPDATE registration_invites SET consumed_at=?,used_by=? WHERE code_hash=? AND consumed_at IS NULL', (now(), owner, invite_hash)).rowcount
+                if changed != 1:
+                    raise HTTPException(403, '请输入有效且未使用的邀请码')
             session(db, owner, response, request)
         return {'authenticated': True, 'inherited_records': first}
 

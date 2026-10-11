@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.curriculum import NODE_MAP
 from app import ai_policy
+from app.ai_transport import completion_content
 
 
 class TutorContent(BaseModel):
@@ -18,7 +19,7 @@ def fallback(q, submitted=False, unavailable=False):
     if submitted:
         reply = "这道题可以分成两步：\n" + "\n".join(q["steps"])
     return {"reply": reply, "check_question": f"你能用自己的话解释“{node['name']}”这一步为什么这样做吗？",
-            "provider": "rules", "notice": "AI 暂时无法连接，已切换为题库提示。" if unavailable else "当前使用题库提示；配置 DeepSeek 后可进行 AI 对话。"}
+            "provider": "rules", "notice": "AI 暂时无法连接，已切换为题库提示。" if unavailable else "当前使用题库提示；配置 AI 后可进行对话。"}
 
 
 async def respond(settings, q, message, student_state, previous, submitted=False):
@@ -53,12 +54,12 @@ async def respond(settings, q, message, student_state, previous, submitted=False
             result = await client.post(settings.deepseek_base_url.rstrip("/") + "/chat/completions",
                                        headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
                                        json={"model": settings.deepseek_model, "messages": messages,
-                                             "max_tokens": 1500, "stream": False,
+                                             **settings.completion_options(1500), "stream": False,
                                              "response_format": {"type": "json_object"}})
             result.raise_for_status()
             data = result.json()
-            content = TutorContent.model_validate_json(data["choices"][0]["message"]["content"])
-            return {**content.model_dump(), "provider": "deepseek", "notice": "AI 讲解仅作学习参考；评分以题库规则为准。"}
+            content = TutorContent.model_validate_json(completion_content(data))
+            return {**content.model_dump(), "provider": settings.ai_provider, "notice": "AI 讲解仅作学习参考；评分以题库规则为准。"}
     except (httpx.HTTPError, ValidationError, ValueError, KeyError, IndexError, TypeError):
         # 不把第三方响应正文、请求头或密钥返回前端。
         return fallback(q, submitted, unavailable=True)

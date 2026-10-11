@@ -142,11 +142,15 @@ def evidence(db, subject):
         for g in GOALS.values():
             for node_id in g["legacy_ids"]:
                 targets[node_id].append(g["id"])
-        for row in db.execute("SELECT a.id,a.question_id,a.result,q.knowledge_id FROM attempts a JOIN questions q ON q.id=a.question_id WHERE student_id=current_student() AND status='submitted'"):
+        for row in db.execute("SELECT a.id,a.question_id,a.result,q.knowledge_id,q.data FROM attempts a JOIN questions q ON q.id=a.question_id WHERE student_id=current_student() AND status='submitted'"):
             value = json.loads(row["result"])
             if value.get("evidence_weight", 0) <= 0:
                 continue
-            for gid in targets[row["knowledge_id"]]:
+            q = json.loads(row['data'])
+            from app.math_catalog import TYPE_MAP
+            canonical = TYPE_MAP.get(q.get('question_type')) if q.get('provenance',{}).get('family')=='foundations' else None
+            goal_ids = [canonical['goal_id']] if canonical else targets[row['knowledge_id']]
+            for gid in goal_ids:
                 result[gid].append({"id": "legacy:" + row["id"], "question_identity": row["question_id"],
                                     "correct": value["correct"], "weight": value["evidence_weight"],
                                     "types": [value.get("question_type_id", row["knowledge_id"])]})
@@ -198,7 +202,11 @@ def context(db, subject, q=None, book_id=None, unit_id=None):
     related_ids = set()
     if q:
         related_ids = {g[0] for g in matched_goals(q)}
-        if q.get("knowledge_id"):
+        from app.math_catalog import TYPE_MAP
+        canonical = TYPE_MAP.get(q.get('question_type')) if q.get('provenance',{}).get('family')=='foundations' else None
+        if canonical:
+            related_ids.add(canonical['goal_id'])
+        elif q.get("knowledge_id"):
             related_ids |= {g["id"] for g in GOALS.values() if q["knowledge_id"] in g["legacy_ids"]}
     ranked = sorted(targets, key=lambda g: (g["id"] not in related_ids, g["mastery"] is not None, g["mastery"] or 0))
     return {"version": VERSION, "subject": subject, "grade": value["book"]["grade"], "term": value["book"]["term"],

@@ -27,6 +27,9 @@ def parse_number(text: str) -> Fraction:
 
 def validate_question(q: dict) -> bool:
     """独立数学不变量校验；不使用模型答案充当正确性证据。"""
+    if q.get('provenance', {}).get('family') == 'foundations':
+        from app.foundations import validate_foundation
+        return validate_foundation(q)
     p, answer, k = q["parameters"], parse_number(q["answer"]), q["knowledge_id"]
     a, b, c = p["a"], p["b"], p["c"]
     checks = {
@@ -149,6 +152,15 @@ def make_question(knowledge_id: str, index: int) -> dict:
 
 
 def grade(q: dict, value: str) -> dict:
+    if q.get('provenance', {}).get('family') == 'foundations':
+        from app.answers import equivalent
+        correct = equivalent(q, value, q['answer'])
+        feedback = {'expression':'请检查数量关系、括号以及固定费用；形式不同但恒等的一次式可以判对。',
+                    'scientific':'检查数值、10的指数以及系数范围：系数的绝对值须大于等于1且小于10。',
+                    'decimal':'检查四舍五入结果及小数位数；末尾0也表示精确程度。'}
+        return dict(correct=correct, score=int(correct), max_score=1, answer=q['answer'],
+                    steps=q['steps'], rubric=q['rubric'], error=None if correct else {
+                        'code':'unclassified','feedback':feedback.get(q['answer_mode'],'答案还不正确，请对照条件和解析检查；单次错答不能确定具体错误原因。')})
     parsed = parse_number(value)
     correct = parsed == parse_number(q["answer"])
     error = None
@@ -160,4 +172,4 @@ def grade(q: dict, value: str) -> dict:
 
 
 def public_question(q: dict) -> dict:
-    return {key: q[key] for key in ("id", "knowledge_id", "stem", "difficulty", "question_type", "provenance")}
+    return {key: q[key] for key in ("id", "knowledge_id", "stem", "difficulty", "question_type", "provenance", "answer_mode", "diagram") if key in q}

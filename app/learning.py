@@ -95,7 +95,8 @@ def next_question(db, knowledge_id: str | None, difficulty: int | None = None, a
     active = db.execute("SELECT * FROM attempts WHERE student_id=? AND status='assigned'", (student_id(),)).fetchone()
     if active:
         row, q = get_attempt(db, active["id"])
-        if (knowledge_id is None or q["knowledge_id"] == knowledge_id) and (difficulty is None or q["difficulty"]==difficulty) and (not question_type_id or template_type_id(q)==question_type_id):
+        compatible = question_type_id or q.get('provenance',{}).get('family') != 'foundations'
+        if compatible and (knowledge_id is None or q["knowledge_id"] == knowledge_id) and (difficulty is None or q["difficulty"]==difficulty) and (not question_type_id or template_type_id(q)==question_type_id):
             result=public_question(q);result["type_id"]=template_type_id(q)
             return {"attempt_id": row["id"], "question": result, "reason": "继续完成当前练习。", "hint_used": bool(row["hint_used"])}
         db.execute("UPDATE attempts SET status='skipped' WHERE id=?", (row["id"],))
@@ -107,6 +108,8 @@ def next_question(db, knowledge_id: str | None, difficulty: int | None = None, a
         (SELECT COUNT(*) FROM attempts a WHERE a.question_id=q.id AND a.student_id=?) ASC,
         q.created_at,q.id""", (knowledge_id, student_id()))
     candidates=[json.loads(r[0]) for r in candidates]
+    if not question_type_id:
+        candidates=[q for q in candidates if q.get('provenance',{}).get('family')!='foundations']
     candidates=[q for q in candidates if (q["difficulty"]==selected_difficulty if selected_difficulty else q["difficulty"]<3) and (not question_type_id or template_type_id(q)==question_type_id)]
     if not candidates:
         raise HTTPException(404, "当前知识点或题型暂无所选难度的题目，请换一个范围")
@@ -126,7 +129,8 @@ def submit(db, attempt_id: str, answer: str):
     db.execute("BEGIN IMMEDIATE")
     row, q = get_attempt(db, attempt_id)
     if row["status"] == "submitted":
-        if parse_number(row["answer"]) != parse_number(answer):
+        from app.answers import equivalent
+        if not equivalent(q, row['answer'], answer):
             raise HTTPException(409, "这道练习已经提交，请开始下一题")
         return json.loads(row["result"])
     if row["status"] != "assigned":

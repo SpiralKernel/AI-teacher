@@ -155,7 +155,7 @@ def create_router(settings):
                 if active:
                     q=json.loads(active['data']);tid=resolve_type(template_type_id(q))
                     if q['id'] in {q['id'] for t in options for q in pools[t['id']]}:
-                        return {'source':'verified','attempt_id':active['id'],'question':{**public_question(q),'answer_mode':'numeric'},'type_name':TYPE_MAP[tid]['name']}
+                        return {'source':'verified','attempt_id':active['id'],'question':{'answer_mode':'numeric',**public_question(q)},'type_name':TYPE_MAP[tid]['name']}
                 basic=[t for t in options if any(q['difficulty']<3 for q in pools[t['id']])]
                 challenge=[t for t in options if any(q['difficulty']==3 for q in pools[t['id']])]
                 choices=(challenge if challenge and body.allow_challenge and random.random()<.15 else basic) or options
@@ -175,7 +175,7 @@ def create_router(settings):
                     db.execute("UPDATE attempts SET status='skipped' WHERE id=?",(active['id'],))
                 attempt_id=str(uuid.uuid4())
                 db.execute("INSERT INTO attempts(id,student_id,question_id,assigned_at) VALUES(?,current_student(),?,?)",(attempt_id,q['id'],now()))
-                return {'attempt_id':attempt_id,'source':'verified','type_name':t['name'],'question':{**public_question(q),'answer_mode':'numeric'}}
+                return {'attempt_id':attempt_id,'source':'verified','type_name':t['name'],'question':{'answer_mode':'numeric',**public_question(q)}}
             selection=bank.Selection(course_book_id=book_id(),course_unit_id=body.unit_id,tag_id=body.type_id,
                                      answer_mode='written' if body.written else 'choice' if body.choice else None,allow_challenge=body.allow_challenge)
             value=bank.next_question(db,selection)
@@ -208,7 +208,7 @@ def create_router(settings):
                 content=[{'type':'text','text':body.message}]+[{'type':'image_url','image_url':{'url':'data:image/jpeg;base64,'+base64.b64encode(im).decode()}} for im in files]
             payload.append({'role':'user','content':content})
             value=await bank_ai.request_json(settings,payload,TutorContent,vision=bool(files))
-            result={**value.model_dump(),'provider':'deepseek','score_recorded':False,'next_step':'回题库独立复测','type_id':body.type_id}
+            result={**value.model_dump(),'provider':settings.ai_provider,'score_recorded':False,'next_step':'回题库独立复测','type_id':body.type_id}
             with connect(settings.database_path) as db:
                 db.execute('INSERT INTO study_messages(student_id,book_id,type_id,message,response,created_at) VALUES(current_student(),?,?,?,?,?)',(book_id(),body.type_id,body.message,dumps(result),now()))
             return result

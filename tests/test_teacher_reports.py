@@ -168,7 +168,12 @@ def test_reports_auto_statistics_cached_ai_and_pdf(setup,monkeypatch):
     assert value['summary']['questions']==1 and value['summary']['observations']==1
     calls=[]
     async def analysis(settings,messages,schema,vision=False):
-        calls.append(messages);return schema(summary='孩子正在主动了解绝对值。',strengths=[],focus=[],parent_actions=['请孩子解释距离的含义。'],next_steps=['独立尝试一道新题。'],uncertainty='目前只有提问线索，不能判断掌握。')
+        calls.append(messages)
+        material=json.loads(messages[1]['content'])['learning_material']
+        assert 'questions' not in material['summary'] and material['summary']['ai_questions']==1
+        assert material['activity_facts']['题库作答次数']==0 and material['activity_facts']['AI提问次数']==1
+        assert 'memory_version' not in material
+        return schema(summary='孩子正在主动了解绝对值。',strengths=[],focus=[],parent_actions=['请孩子解释距离的含义。'],next_steps=['独立尝试一道新题。'],uncertainty='目前只有提问线索，不能判断掌握。')
     monkeypatch.setattr(bank_ai,'request_json',analysis)
     result=client.post('/api/v1/reports/analyze',json={'period':'week'})
     assert result.status_code==200,result.text
@@ -189,6 +194,17 @@ def test_report_rejects_fabricated_evidence_references(setup,monkeypatch):
     async def invalid(settings,messages,schema,vision=False):return schema(summary='摘要',focus=[{'type_id':'made-up','finding':'无依据困难','evidence_ids':['invented']}],uncertainty='证据不足')
     monkeypatch.setattr(bank_ai,'request_json',invalid)
     assert client.post('/api/v1/reports/analyze',json={'period':'week'}).status_code==502
+    assert client.get('/api/v1/reports').json()['analysis_source']=='rules'
+
+
+@pytest.mark.parametrize('text',['根据 note:12345678-abcd 的记录','目前 review_queue 为空','current_status 是稳定'])
+def test_parent_report_body_cannot_expose_internal_ids_or_fields(setup,monkeypatch,text):
+    client,settings=setup
+    async def analysis(settings,messages,schema,vision=False):
+        return schema(summary=text,strengths=[],focus=[],parent_actions=['先听解题思路。'],next_steps=['独立练习。'],uncertainty='证据仍少。')
+    monkeypatch.setattr(bank_ai,'request_json',analysis)
+    response=client.post('/api/v1/reports/analyze',json={'period':'week'})
+    assert response.status_code==502 and '内部记录编号' in response.json()['detail']
     assert client.get('/api/v1/reports').json()['analysis_source']=='rules'
 
 

@@ -12,7 +12,8 @@ from app.course_catalog import BOOK_MAP
 from app.db import audit, dumps, now
 from app.math_catalog import BOOK_ID, TYPES, TYPE_MAP, VERSION, resolve_type
 from app.question_types import template_type_id
-from app.questions import parse_number, public_question, validate_question
+from app.questions import public_question, validate_question
+from app.answers import parse_answer
 
 
 def verified_pool(db):
@@ -96,6 +97,7 @@ def coverage(db, unit_id=None):
         qs = pools[t['id']]
         levels = {str(n):sum(q['difficulty']==n for q in qs) for n in (1,2,3)}
         items.append({**t, **profile[t['id']], 'verified_questions':len(qs), 'difficulty_counts':levels,
+            'verified_structures':sorted({q['provenance']['structure'] for q in qs if q.get('provenance',{}).get('structure')}),
             'candidate_goal_questions':candidates.get(t['goal_id'],0),
             'coverage_status':'可作抽样诊断' if levels['1']+levels['2'] else '有挑战题，需补基础题' if levels['3'] else '待补核验题'})
     return {'version':VERSION, 'book_id':BOOK_ID, 'unit_id':unit_id,
@@ -213,20 +215,20 @@ def answer(db, session_id, position, text):
     row = db.execute('SELECT * FROM math_diagnostic_items WHERE session_id=? AND position=?',(session_id,position)).fetchone()
     if not row:
         raise HTTPException(404, '诊断题目不存在')
-    # 重试只允许同一数值，不重复记录，不跳转到下一题提交。
+    q = json.loads(db.execute('SELECT data FROM questions WHERE id=?',(row['question_id'],)).fetchone()[0])
+    # 重试仅允许同一种符合题目要求的答案，不重复记录。
     try:
-        value = parse_number(text)
+        value = parse_answer(q, text)
     except ValueError as exc:
         raise HTTPException(422,str(exc)) from exc
     if row['attempt_id']:
         previous = db.execute('SELECT answer FROM attempts WHERE id=?',(row['attempt_id'],)).fetchone()[0]
-        if parse_number(previous)!=value:
+        if parse_answer(q, previous)!=value:
             raise HTTPException(409,'本题已提交，不能修改原作答')
         return session_view(db, session_id)
     first = db.execute('SELECT MIN(position) FROM math_diagnostic_items WHERE session_id=? AND attempt_id IS NULL',(session_id,)).fetchone()[0]
     if session['status']!='active' or first!=position:
         raise HTTPException(409,'请按顺序完成当前诊断题')
-    q = json.loads(db.execute('SELECT data FROM questions WHERE id=?',(row['question_id'],)).fetchone()[0])
     attempt_id = str(uuid.uuid4())
     # 诊断没有普通练习的assigned行，因而不抢占/跳过正在进行的普通练习。
     db.execute("INSERT INTO attempts(id,student_id,question_id,status,assigned_at) VALUES(?,current_student(),?,'submitted',?)",(attempt_id,q['id'],now()))

@@ -125,7 +125,7 @@ def create_router(settings):
     @router.post("/attempts/{attempt_id}/assess")
     async def assess(attempt_id: str, answer: str = Form("", max_length=12000), files: list[UploadFile] | None = File(None)):
         if not settings.deepseek_api_key:
-            raise HTTPException(503, "请先在服务端配置 DeepSeek Key")
+            raise HTTPException(503, "请先在服务端配置 AI Key")
         if len(files or []) > 4:
             raise HTTPException(422, "每题最多上传 4 张解答图片")
         contents, total = [], 0

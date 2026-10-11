@@ -58,6 +58,9 @@ def validate_analysis(value, analysis):
             raise HTTPException(502,'分析引用的依据不足或不匹配，请重试；学习状态没有变化。')
     # There is no calibrated ability scale: reject numeric capability claims anywhere.
     text=dumps(analysis.model_dump())
+    narrative=dumps({**analysis.model_dump(exclude={'focus'}), 'focus':[f.finding for f in analysis.focus]})
+    if re.search(r'(?:note|attempt|bank):[A-Za-z0-9_-]{6,}|review_queue|current_status|memory_status|memory_version|report_policy_version', narrative):
+        raise HTTPException(502,'分析正文包含内部记录编号，请重试；学习状态没有变化。')
     if re.search(r'\d(?:\.\d+)?\s*[%％]|百分之[零一二三四五六七八九十百\d]+|(?:能力|掌握)(?:评分|分数|得分)\s*[：:为是]?\s*\d', text):
         raise HTTPException(502,'分析包含未经校准的能力数值，请重试；学习状态没有变化。')
 
@@ -126,7 +129,7 @@ def snapshot(db, period):
           'evidence':records[-50:]+[{'id':'note:'+n['id'],'type_id':n['type_id'],'quote':n['evidence_quote'],'note':n['note'],'kind':n['kind'],'source':n['source'],
             'policy_version':n.get('policy_version'),'validation':n.get('validation',{}),
             'memory_status':n['memory_status'],'message_id':n.get('message_id'),'created_at':n['created_at'],'resolved_by':n['resolved_by']} for n in notes[-30:]],'rule_analysis':rule,
-          'policy_version':ai_policy.VERSION,'memory_version':memory.VERSION}
+          'policy_version':ai_policy.VERSION,'report_policy_version':ai_policy.REPORT_VERSION,'memory_version':memory.VERSION}
     # 版本包含所有统计和可追溯材料；生成时间不进入指纹，重复打开不会重复消耗模型。
     data['fingerprint']=hashlib.sha256(dumps(data).encode()).hexdigest()
     cache=db.execute('SELECT * FROM parent_reports WHERE student_id=current_student() AND book_id=? AND period=?',(book_id(),period)).fetchone()
@@ -148,7 +151,14 @@ def create_router(settings):
         async with slots:
             with connect(settings.database_path) as db:value=snapshot(db,body.period)
             if value['analysis_source']=='ai':return value
-            material={k:value[k] for k in ('student','period_label','summary','types','evidence','review_queue','memory_version')}
+            material={k:value[k] for k in ('student','period_label','summary','types','evidence','review_queue')}
+            # questions在本项目指AI提问，不是做过的题数；向模型发送明确的活动含义。
+            counts=value['summary']
+            material['summary']={k:v for k,v in counts.items() if k!='questions'}
+            material['summary']['ai_questions']=counts['questions']
+            material['activity_facts']={'题库作答次数':counts['attempts'],'有效独立题库作答次数':counts['independent'],
+                '辅助题库作答次数':counts['assisted'],'AI提问次数':counts['questions'],
+                '已核对导入题数':counts['imported'],'已保存学习线索条数':counts['observations']}
             material['focus_eligible_evidence_ids']=[e['id'] for e in value['evidence'] if eligible_focus(e)]
             result=await bank_ai.request_json(settings,ai_policy.messages(ai_policy.REPORT,material,content='请分析这一期学情。'),Analysis)
             validate_analysis(value,result)

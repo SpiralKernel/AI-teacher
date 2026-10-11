@@ -17,11 +17,13 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 
 打开 [学习页面](http://127.0.0.1:8010)。首次创建用户名、密码并选择年级和学期。**本机第一个账号继承旧 demo 学生的答题记录**；后续账号从空白状态开始，不共享题型状态、照片或讨论。密码至少 8 位，使用 scrypt 加盐哈希；会话凭证通过 HttpOnly、SameSite Cookie 保存。
 
+云端部署默认采用一次性邀请码注册，已有账号继续登录；每个码只能创建一个账号。维护者通过 `python -m app.manage create-invites --count 10 --output 私密文件路径` 生成名单。环境变量与云端维护步骤见[个人部署](docs/deployment.md)。
+
 进入后用右上角“学习设置”切换年级、学期。学生题目在服务端按身份和当前阶段筛选，直接调用接口也不能通过另一个册次或题目 ID 越过当前范围。切换阶段保留历史记录，切回可继续查看。
 
 ## 学习入口
 
-- **题库**：选择当前学期的章节，开始或继续练习；可关闭随机挑战题。七上短答优先使用独立数学规则核验的原创题，精确比对数值答案。“选择题”练习已筛选的来源题；“文字 / 拍照题”提交完整过程，核对 AI 转写和正误后保存记录。
+- **题库**：选择当前学期的章节，开始或继续练习；可关闭随机挑战题。七上短答优先使用独立数学规则核验的原创题，精确比对数值、一次代数式、科学记数法及近似数答案。“选择题”练习已筛选的来源题；“文字 / 拍照题”提交完整过程，核对 AI 转写和正误后保存记录。
 - **AI老师**：零做题记录也能文字或拍照提问；每道题有“问问 AI”入口，保留草稿。AI按学生原话自动记录题型兴趣、自述困难、引导后理解等线索，新题型可自动登记；学生可标记记录不准确。
 - **导入练习**：在 AI老师中导入空白习题或已答试卷，支持图片/PDF，识别后逐题核对题干、答案及正误。已核对作答形成学习线索。
 - **学情报告**：自动汇总作答、提问、导入题目与章节状态，按周/月/全部生成 AI分析和家长建议；新证据自动触发更新，可导出中文PDF。教材仅用于后台提供当前阶段要求。
@@ -30,24 +32,27 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 
 学生记忆保留来源和变化历史：新证据可让旧困难标为已改善，线索随时间降为待重新确认。历史练习表现与当前展示分开；出现新错误可提示“待独立验证”，距上次验证较久提示“建议复测”。题库优先安排到期复测，AI读取历史不会刷新验证时间，家长报告和PDF同步展示当前状态。
 
-目前七上有 37 个标准题型，其中 26 个有规则核验题。其余 11 个继续作为待补题型显示。七下和八、九年级可练习匹配课程目标的来源题，核验不足时不会假装形成可靠评分。具体规则见 [学生流程与证据](docs/student-flow.md)。
+目前七上37个标准题型均已有原创规则核验题，25类有基础/进阶起步题，另外12类目前仅有挑战题。新增11类各包含3个子任务，支持一次代数式等价、科学记数法格式、近似数精度和正方体展开图；这些是起步抽样，不能当作完整教材或题型覆盖认证。七下和八、九年级使用匹配课程目标的来源题，核验不足时不会假装形成可靠评分。具体规则见 [学生流程与证据](docs/student-flow.md)。
 
 ## AI 配置
 
 首次复制 `.env.example` 为 `.env`，已有配置直接编辑后重启。密钥只由服务端读取，不下发浏览器。
 
 ```dotenv
-DEEPSEEK_API_KEY=填写自己的密钥
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-flash
-DEEPSEEK_VISION_MODEL=deepseek-flash
+AI_PROVIDER=mimo
+AI_API_KEY=填写自己的密钥
+AI_BASE_URL=https://api.xiaomimimo.com/v1
+AI_MODEL=mimo-v2.6-flash
+AI_VISION_MODEL=mimo-v2.6-flash
 DATABASE_PATH=data/ai-teacher.sqlite3
-AI_TIMEOUT_SECONDS=45
+AI_TIMEOUT_SECONDS=60
 VISION_TIMEOUT_SECONDS=90
 AUTH_REQUIRED=true
 ```
 
 无 Key 可登录、做核验题和更新题型状态。AI 讲解、识图与主观题评阅需要所配置模型支持相应能力；调用失败会保留原状态并允许重试。图片解读和手写转写仍需核对，不能据测试样例推断所有图形及手写过程均能可靠判断。
+
+当前个人配置使用MiMo，接口兼容性按[官方文档](https://mimo.mi.com/docs/en-US/api/chat)适配：使用`max_completion_tokens`，短结构化交互关闭思考模式。切回DeepSeek时设置`AI_PROVIDER=deepseek`、`AI_BASE_URL=https://api.deepseek.com`及相应模型。原`DEEPSEEK_*`环境变量仍兼容；通用`AI_*`变量优先。密钥不打印、不提交，`.env`建议限制为仅文件所有者可读写。
 
 `AUTH_REQUIRED` 默认 `true`。旧业务单元测试显式使用 `false` 来验证历史单学生接口；日常运行保持默认，所有学生请求走身份隔离。旧地图、百分比画像和独立诊断面板不由学生入口加载。旧有门槛的补强接口保留回归兼容，新界面答疑统一使用 `/teacher`，无需先做五题。
 
@@ -61,6 +66,8 @@ AUTH_REQUIRED=true
 | `app/ai_policy.py`、`app/observation_guard.py` | 固定教学规则、证据前置条件与独立复核 |
 | `app/reports.py`、`app/report_pdf.py` | 学情汇总、AI分析缓存、中文PDF |
 | `app/bank.py`、`app/bank_ai.py` | 全科题库、来源标签、照片评阅 |
+| `app/foundations.py`、`app/answers.py` | 七上基础题子结构、独立核验与精确答案解析 |
+| `app/config.py`、`app/ai_transport.py` | AI提供商配置、预算参数和输出结束状态检查 |
 | `app/datasets.py`、`app/math_quality.py` | 来源适配、数学候选细分标注、精确复核及隔离 |
 | `app/course_catalog.py`、`app/courses.py` | 阶段要求和候选题目映射 |
 | `web/index.html`、`web/js/student.js`、`web/css/student.css` | 当前学生界面 |
@@ -76,6 +83,7 @@ AUTH_REQUIRED=true
 课程目录含 56 个阶段、170 个单元、186 项目标。已核对用户提供的数学七上、七下、八上、八下 PDF 目录；九下 PDF 保留不同章节安排参考，仍缺九上。其他学科仅部分册次已核对，其余明确标为课标进阶建议。候选知识标签映射不等于逐题匹配教材或完整覆盖目标。
 
 - [目录分工与维护入口](docs/project-structure.md)
+- [云端个人部署与维护](docs/deployment.md)
 - [全科阶段要求](docs/junior-curriculum.md)
 - [本地教材与核对边界](docs/local-textbooks.md)
 - [数学题型地图](docs/math-type-map.md)与[核验题覆盖](docs/math-coverage.md)
@@ -96,11 +104,14 @@ uv run python scripts/export_curriculum.py --check
 uv run python scripts/export_math.py --check
 uv run python scripts/eval_teaching.py
 uv run python scripts/eval_memory.py
+uv run python scripts/check_personal_ai.py
 uv run pytest -q
 PYTHONPATH=. uv run python scripts/browser_student.py
 ```
 
 浏览器验收使用本机 Chrome、临时数据库与本地模拟 AI，覆盖注册、零记录答疑、照片问题、自动学习线索、即时求助保留草稿、识图导入核对、AI报告/PDF、阶段切换、多学生和手机布局，不消耗真实 API，也不修改真实学生记录。旧 `browser_math.py` 等脚本验证的是历史页面，不再作为当前学生界面的验收入口。
+
+`check_personal_ai.py`会消耗少量真实API用量，使用临时数据库和原创印刷体样例，检查当前文字答疑、错误过程、改分指令、图片核对、已答试卷识图、过程评阅和报告/PDF；结果保存在被Git忽略的`output/evals/`。通过只代表这些样例，不是手写准确率或整体教学质量评测。
 
 当前数据库 schema9，新增自由答疑、学习线索、报告缓存及导入材料所属册次；schema8账号、会话与旧讨论保留，保留原题快照及学生作答。升级真实库前使用 SQLite 在线备份，并逐表核对原有记录。
 

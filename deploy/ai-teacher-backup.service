@@ -1,0 +1,10 @@
+[Unit]
+Description=AI-teacher database and upload backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ai-teacher
+ExecStart=/usr/bin/docker compose exec -T app python -m app.manage backup
+Nice=10

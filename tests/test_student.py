@@ -26,6 +26,24 @@ def register(client,name='alice',grade=7,term=1):
     return r.json()
 
 
+def test_private_deployment_disables_registration_but_keeps_existing_login(tmp_path):
+    settings=Settings(database_path=tmp_path/'private.sqlite3',_env_file=None)
+    with TestClient(create_app(settings)) as client:
+        register(client)
+    private=settings.model_copy(update={'registration_enabled':False})
+    with TestClient(create_app(private),base_url='https://learning.example') as client:
+        assert client.get('/api/v1/auth/session').json()['registration_enabled'] is False
+        response=client.post('/api/v1/auth/register',json={'username':'bob','password':'test-pass-123','grade':7,'term':1})
+        assert response.status_code==403
+        with connect(settings.database_path) as db:
+            assert db.execute('SELECT count(*) FROM accounts').fetchone()[0]==1
+        response=client.post('/api/v1/auth/login',json={'username':'alice','password':'test-pass-123'},headers={'Origin':'https://learning.example'})
+        assert response.status_code==200
+        assert 'Secure' in response.headers['set-cookie']
+        assert client.get('/api/v1/study/home').status_code==200
+        assert client.post('/api/v1/auth/stage',json={'grade':8,'term':1},headers={'Origin':'https://other.example'}).status_code==403
+
+
 def home(client):
     r=client.get('/api/v1/study/home');assert r.status_code==200,r.text
     return r.json()

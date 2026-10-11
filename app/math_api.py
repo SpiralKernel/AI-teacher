@@ -62,10 +62,12 @@ def create_router(settings):
         t = TYPE_MAP.get(body.type_id)
         if not t:
             raise HTTPException(422,"请选择七上数学已有题型")
-        if not t["legacy_type_ids"]:
+        from app.foundations import CATALOG
+        foundation = body.type_id.removeprefix('m7a:')
+        if not t["legacy_type_ids"] and foundation not in CATALOG:
             raise HTTPException(404,"该题型还缺核验题，暂不能开始专项练习")
-        legacy_id = t["legacy_type_ids"][0]
-        key = legacy_id.split(":")[1]
+        legacy_id = t["legacy_type_ids"][0] if t['legacy_type_ids'] else body.type_id
+        key = legacy_id.split(":")[1] if t['legacy_type_ids'] else CATALOG[foundation][0]
         with connect(settings.database_path) as db:
             return learning.next_question(db,key,question_type_id=legacy_id)
 
