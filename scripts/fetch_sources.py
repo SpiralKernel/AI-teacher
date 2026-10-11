@@ -28,12 +28,21 @@ def fetch(root, dataset):
             return response.content
 
         if dataset == "tal":
+            revision = json.loads(get("https://huggingface.co/api/datasets/math-eval/TAL-SCQ5K"))["sha"]
             for file in ["README.md", "TAL-SCQ5K-CN/train.jsonl", "TAL-SCQ5K-CN/test.jsonl"]:
                 out = folder / file
                 out.parent.mkdir(parents=True, exist_ok=True)
-                out.write_bytes(get("https://huggingface.co/datasets/math-eval/TAL-SCQ5K/resolve/main/" + file))
+                out.write_bytes(get(f"https://huggingface.co/datasets/math-eval/TAL-SCQ5K/resolve/{revision}/" + file))
+        elif dataset == "cmm":
+            # Pin metadata and content to the same immutable upstream revision.
+            meta = json.loads(get("https://huggingface.co/api/datasets/ecnu-icalk/cmm-math"))
+            revision = meta["sha"]
+            for file in ["README.md", "train_data.jsonl", "test_data.jsonl"]:
+                (folder / file).write_bytes(get(
+                    f"https://huggingface.co/datasets/ecnu-icalk/cmm-math/resolve/{revision}/{file}"))
         elif dataset == "cjeval":
-            payload = get("https://codeload.github.com/SmileWHC/CJEval/zip/refs/heads/main")
+            revision = json.loads(get("https://api.github.com/repos/SmileWHC/CJEval/commits/main"))["sha"]
+            payload = get(f"https://codeload.github.com/SmileWHC/CJEval/zip/{revision}")
             with zipfile.ZipFile(io.BytesIO(payload)) as archive:
                 for member in archive.infolist():
                     relative = Path(*Path(member.filename).parts[1:])
@@ -64,11 +73,13 @@ def fetch(root, dataset):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", choices=["tal", "cjeval", "ceval", "all"], default="all")
+    parser.add_argument("--dataset", choices=["tal", "cjeval", "ceval", "cmm", "math", "all"], default="all")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     root = args.output or Settings().database_path.parent / "sources"
-    for dataset in (["tal", "cjeval", "ceval"] if args.dataset == "all" else [args.dataset]):
+    datasets = (["tal", "cjeval", "ceval", "cmm"] if args.dataset == "all" else
+                ["cjeval", "tal", "cmm"] if args.dataset == "math" else [args.dataset])
+    for dataset in datasets:
         fetch(root, dataset)
 
 

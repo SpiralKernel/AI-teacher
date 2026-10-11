@@ -12,6 +12,7 @@ from functools import lru_cache
 
 TAL_URL = "https://huggingface.co/datasets/math-eval/TAL-SCQ5K"
 GAOKAO_URL = "https://github.com/OpenLMLab/GAOKAO-Bench"
+CMM_URL = "https://huggingface.co/datasets/ecnu-icalk/cmm-math"
 SUBJECTS = {
     "math", "physics", "chemistry", "biology", "chinese", "english",
     "history", "geography", "politics", "science", "information",
@@ -29,8 +30,8 @@ _IMAGE_MARK = re.compile(r"如图|如下图|见图|图示|图中|图片|下图|<
 
 def _dataset_dir(root: Path, dataset: str) -> Path:
     root = Path(root)
-    if dataset not in {"tal", "gaokao", "cjeval", "ceval"}:
-        raise ValueError("dataset must be 'tal', 'gaokao', 'cjeval', or 'ceval'")
+    if dataset not in {"tal", "gaokao", "cjeval", "ceval", "cmm"}:
+        raise ValueError("unsupported dataset")
     candidates = (root / dataset, root)
     for candidate in candidates:
         if dataset == "tal" and (candidate / "TAL-SCQ5K-CN").is_dir():
@@ -39,7 +40,9 @@ def _dataset_dir(root: Path, dataset: str) -> Path:
             return candidate
         if dataset == "cjeval" and (candidate / "data" / "CJEval_data").is_dir():
             return candidate
-        if dataset == "ceval" and candidate.exists():
+        if dataset == "cmm" and (candidate / "train_data.jsonl").is_file():
+            return candidate
+        if dataset == "ceval" and any(candidate.glob("*/middle_school_politics*.csv")):
             return candidate
     # Also accept data/sources as root where directories may be named normally.
     raise FileNotFoundError(f"Could not find {dataset} source under {root}")
@@ -54,6 +57,8 @@ def _files(root: Path, dataset: str) -> list[Path]:
         return sorted((folder / "Data").rglob("*.json"))
     if dataset == "cjeval":
         return sorted((folder / "data" / "CJEval_data").rglob("*.json"))
+    if dataset == "cmm":
+        return [p for p in (folder / "train_data.jsonl", folder / "test_data.jsonl") if p.is_file()]
     return sorted(p for p in folder.rglob("*.csv") if "middle_school_politics" in p.name.lower() and any(x in p.parts for x in ("dev", "val")))
 
 
@@ -404,7 +409,7 @@ def _cjeval_records(path: Path) -> Iterator[dict[str, Any]]:
                            status=status, issues=issues, source_id=source_id,
                            source_file=str(path.relative_to(path.parents[3])), url="https://github.com/SmileWHC/CJEval",
                            license_="Academic/research use only", options=options, kind=kind)
-            record.update(stage="junior", answer_mode=answer_mode,
+            record.update(stage="junior", answer_mode=answer_mode, display_stem=stem if options else original_stem,
                           has_missing_assets=has_missing_assets,
                           derived_type_tags=derived_type_tags,
                           derived_type_tags_source="source_derived")
@@ -472,6 +477,59 @@ def _ceval_records(path: Path) -> Iterator[dict[str, Any]]:
                                                        "annotation_model_note": annotation_meta.get("annotation_model_note")}
 
 
+def _cmm_records(path: Path) -> Iterator[dict[str, Any]]:
+    grades = {"一年级": 1, "二年级": 2, "三年级": 3, "四年级": 4, "五年级": 5,
+              "六年级": 6, "七年级": 7, "八年级": 8, "九年级": 9,
+              "高一": 10, "高二": 11, "高三": 12}
+    for line in path.open(encoding="utf-8"):
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        grade = grades.get(row.get("level"))
+        stage = "unknown" if grade is None else "primary" if grade < 7 else "junior" if grade < 10 else "senior"
+        question, option_text = _text(row.get("question")), _text(row.get("options"))
+        repairs = []
+        # The source often omits just the first A marker. Only recover an otherwise
+        # complete ordered B/C/D list with nonempty leading text, never invent content.
+        markers = list(_OPTION_MARK.finditer(option_text))
+        if [m.group(1) for m in markers] == ["B", "C", "D"] and option_text[:markers[0].start()].strip():
+            option_text = "A. " + option_text
+            repairs.append("restored_missing_first_option_label")
+        _, options = _options_from_text(option_text)
+        answer_text = _text(row.get("answer"))
+        letters = _answer_letters(answer_text)
+        kind = ("single_choice" if len(letters) == 1 else "multiple_choice") if option_text else "reference"
+        issues = []
+        if not question or not answer_text or answer_text.lower() in {"null", "none"}:
+            issues.append("missing_stem_or_answer")
+        if option_text and (not letters or len(options) != 4 or not set(letters).issubset({o['key'] for o in options})):
+            issues.append("invalid_choice_options_or_answer")
+        images = row.get("image") or []
+        if isinstance(images, str):
+            try:
+                images = json.loads(images)
+            except ValueError:
+                images = [images]
+        missing = bool(images) or bool(_IMAGE_MARK.search(question + option_text)) or "<ImageHere>" in question + option_text
+        status = "quarantine" if issues else "reference" if missing or kind == "reference" else "ready"
+        if missing:
+            issues.append("image_or_figure_requires_asset_review")
+        analysis = _text(row.get("analysis"))
+        if analysis.lower() in {"null", "none"}:
+            analysis = ""
+        source_id = str(row["id"])
+        record = _base(id_=f"bank:cmm:{source_id}", subject="math", stem=question,
+                       answer=letters if option_text else answer_text, steps=[analysis] if analysis else [],
+                       difficulty=2, difficulty_raw=None, tags=[_text(row.get("subject"))],
+                       type_tags=[], tags_source="source", source_tags=[row.get("level"), row.get("subject")],
+                       status=status, issues=issues, source_id=source_id, source_file=path.name,
+                       url=CMM_URL, license_="BSD-3-Clause", options=options, kind=kind)
+        record.update(stage=stage, grade=grade, term=None, source_level=row.get("level"),
+                      source_images=images, has_missing_assets=missing, format_repairs=repairs,
+                      difficulty_basis="unknown_default_not_calibrated")
+        yield record
+
+
 def iter_dataset(root: Path, dataset: str) -> Iterator[dict[str, Any]]:
     """Yield normalized records. ``root`` may be data/sources or the dataset folder."""
     dataset = dataset.lower()
@@ -490,6 +548,9 @@ def iter_dataset(root: Path, dataset: str) -> Iterator[dict[str, Any]]:
                 if record["id"] not in seen:
                     seen.add(record["id"])
                     yield record
+    elif dataset == "cmm":
+        for path in files:
+            yield from _cmm_records(path)
     else:
         for path in files:
             yield from _ceval_records(path)
@@ -509,7 +570,7 @@ def source_manifest(root: Path, dataset: str) -> dict[str, Any]:
                 payload = json.load(f)
             rows = payload.get("example", []) if isinstance(payload, dict) else payload
             file_count = len(rows) if isinstance(rows, list) else 0
-        elif dataset == "cjeval":
+        elif dataset in {"cjeval", "cmm"}:
             file_count = sum(1 for line in path.open(encoding="utf-8") if line.strip())
         else:
             with path.open(encoding="utf-8-sig", newline="") as f:
@@ -522,7 +583,7 @@ def source_manifest(root: Path, dataset: str) -> dict[str, Any]:
     folder = _dataset_dir(Path(root), dataset)
     metadata_files = []
     for path in sorted(folder.iterdir()):
-        if path.is_file() and (path.name.lower().startswith("readme") or path.name.lower().startswith("license")):
+        if path.is_file() and (path.name.lower().startswith("readme") or path.name.lower().startswith("license") or path.name == 'DOWNLOAD.json'):
             metadata_files.append({"source_file": path.name,
                                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
     annotation_path = folder / "annotations.json"
@@ -535,9 +596,9 @@ def source_manifest(root: Path, dataset: str) -> dict[str, Any]:
                                "sha256": hashlib.sha256(annotation_path.read_bytes()).hexdigest()})
     urls = {"tal": TAL_URL, "gaokao": GAOKAO_URL,
             "cjeval": "https://github.com/SmileWHC/CJEval",
-            "ceval": "https://github.com/SJTU-LIT/ceval"}
+            "ceval": "https://github.com/SJTU-LIT/ceval", "cmm": CMM_URL}
     licenses = {"tal": "MIT", "gaokao": "Apache-2.0",
-                "cjeval": "Academic/research use only", "ceval": "CC-BY-NC-SA-4.0"}
+                "cjeval": "Academic/research use only", "ceval": "CC-BY-NC-SA-4.0", "cmm": "BSD-3-Clause"}
     return {"dataset": dataset, "url": urls[dataset], "license": licenses[dataset],
             "count": count, "unique_count": unique_count, "files": entries,
             "metadata_files": metadata_files}

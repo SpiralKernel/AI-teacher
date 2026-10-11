@@ -13,6 +13,25 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
 
 
+def test_cmm_source_grade_conservative_option_repair_and_missing_figures(tmp_path):
+    row = {'id':'1','question':'-3的绝对值是（）','answer':'C','options':'-3\nB. -1/3\nC. 3\nD. 1/3',
+           'analysis':'绝对值是距离。','image':[],'level':'七年级','subject':'算术'}
+    _write_jsonl(tmp_path/'cmm/train_data.jsonl', [row,
+        {**row,'id':'2','image':['a.jpg']}, {**row,'id':'3','options':'A. -3\nC. 3\nD. 1/3'},
+        {**row,'id':'4','level':'高二'}, {**row,'id':'5','level':'未知年级'},
+        {**row,'id':'6','answer':'null'}, {**row,'id':'7','image':[],'question':'如图选择<ImageHere>'}])
+    qs=list(iter_dataset(tmp_path,'cmm'))
+    assert qs[0]['grade']==7 and qs[0]['term'] is None
+    assert qs[0]['stage']=='junior' and qs[0]['status']=='ready'
+    assert qs[0]['format_repairs']==['restored_missing_first_option_label']
+    assert qs[0]['options'][0]=={'key':'A','text':'-3'}
+    assert qs[1]['has_missing_assets'] and qs[1]['source_images']==['a.jpg']
+    assert qs[1]['status']=='reference' and qs[2]['status']=='quarantine'
+    assert qs[3]['stage']=='senior' and qs[4]['stage']=='unknown'
+    assert qs[5]['status']=='quarantine' and qs[6]['has_missing_assets']
+    assert source_manifest(tmp_path,'cmm')['count']==7
+
+
 def test_tal_adapter_maps_explicit_stage_and_keeps_invalid_image_quarantined(tmp_path):
     root = tmp_path / "tal"
     sample = {

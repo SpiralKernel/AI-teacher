@@ -21,7 +21,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 
 ## 学习入口
 
-- **题库**：选择当前学期的章节，开始或继续练习；可关闭随机挑战题。七上短答优先使用独立数学规则核验的原创题，精确比对数值答案。选择“文字 / 拍照题”提交完整过程，核对 AI 转写和正误后保存记录。
+- **题库**：选择当前学期的章节，开始或继续练习；可关闭随机挑战题。七上短答优先使用独立数学规则核验的原创题，精确比对数值答案。“选择题”练习已筛选的来源题；“文字 / 拍照题”提交完整过程，核对 AI 转写和正误后保存记录。
 - **AI老师**：零做题记录也能文字或拍照提问；每道题有“问问 AI”入口，保留草稿。AI按学生原话自动记录题型兴趣、自述困难、引导后理解等线索，新题型可自动登记；学生可标记记录不准确。
 - **导入练习**：在 AI老师中导入空白习题或已答试卷，支持图片/PDF，识别后逐题核对题干、答案及正误。已核对作答形成学习线索。
 - **学情报告**：自动汇总作答、提问、导入题目与章节状态，按周/月/全部生成 AI分析和家长建议；新证据自动触发更新，可导出中文PDF。教材仅用于后台提供当前阶段要求。
@@ -61,12 +61,15 @@ AUTH_REQUIRED=true
 | `app/ai_policy.py`、`app/observation_guard.py` | 固定教学规则、证据前置条件与独立复核 |
 | `app/reports.py`、`app/report_pdf.py` | 学情汇总、AI分析缓存、中文PDF |
 | `app/bank.py`、`app/bank_ai.py` | 全科题库、来源标签、照片评阅 |
+| `app/datasets.py`、`app/math_quality.py` | 来源适配、数学候选细分标注、精确复核及隔离 |
 | `app/course_catalog.py`、`app/courses.py` | 阶段要求和候选题目映射 |
 | `web/index.html`、`web/js/student.js`、`web/css/student.css` | 当前学生界面 |
 | `tests/`、`scripts/`、`docs/` | 回归测试、维护工具、课程与项目文档 |
 | `data/` | 本机数据库、上传图片、缓存与备份，不提交 Git |
 
-当前题库保留初中 11 科、27,153 道题及 7,330 个知识点/题型标签；26,855 道具备练习所需材料。语文长阅读和全科主观题后端继续保留，学生界面暂聚焦数学。体音美不纳入。题目来源许可、缺图、答案复核与版本保留规则见 [题库来源](docs/question-sources.md)。非商用并不替代来源许可核对。
+本机2026-10-11导入初中数学来源题，去重后9,906道当前题目，4,517道具备答案、解析、候选细分标签与完整材料可进入练习池；663种候选细分标签仍待逐题审定。新增CMM-Math来源，保留CJEval和TAL初中子集，数学反例、答案冲突及材料缺失有可追溯审核清单，见[数学题库质检](docs/math-bank-quality.md)。
+
+2026-10-08历史开发环境曾导入初中11科27,153道题；该数据库不在当前恢复副本中，不能将历史数量当作本机现状。语文长阅读和全科主观题后端继续保留，学生界面暂聚焦数学，体音美不纳入。来源许可及历史统计见[题库来源](docs/question-sources.md)。
 
 以上题库数量是开发机导入后的统计，不代表仓库附带完整题库。公开仓库仅包含代码、课程/题型元数据、测试和示例截图；API 密钥、学生账号与记录、上传材料、原始题库缓存及教材 PDF 均不提交。新安装可直接使用代码生成的数学核验题，其它来源题需自行按许可导入。
 
@@ -86,7 +89,9 @@ AUTH_REQUIRED=true
 ```bash
 uv run python -m app.manage backup
 uv run python -m app.manage stats
-uv run python -m app.manage import-bank --stage junior
+uv run python scripts/fetch_sources.py --dataset math
+uv run python -m app.manage import-bank --dataset math --subject math --stage junior --math-quality
+uv run python scripts/audit_math_bank.py
 uv run python scripts/export_curriculum.py --check
 uv run python scripts/export_math.py --check
 uv run python scripts/eval_teaching.py

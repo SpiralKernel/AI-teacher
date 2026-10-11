@@ -65,6 +65,7 @@ AI-teacher/
 | 原创题与挑战题生成、精确校验 | `app/questions.py`、`app/challenges.py` | `tests/test_learning.py`、`tests/test_question_types.py` |
 | 全科题库、标签、筛选、选择判分、画像 | `app/bank.py` | `tests/test_bank.py` |
 | 外部题库适配与去重 | `app/datasets.py` | `tests/test_datasets.py` |
+| 数学细分候选标注、精确答案检查与隔离 | `app/math_quality.py` | `tests/test_math_quality.py` |
 | 主观题AI评阅及辅导 | `app/bank_ai.py` | `tests/test_bank.py`、`tests/test_courses.py` |
 | 原数学辅导提示词与API调用 | `app/tutor.py` | `tests/test_learning.py` |
 | 细分题型注册和知识点证据 | `app/question_types.py`、`app/learning.py` | 对应同名测试文件 |
@@ -95,6 +96,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 | 工具 | 用途 |
 | --- | --- |
 | `scripts/fetch_sources.py` | 下载题库来源缓存 |
+| `scripts/audit_math_bank.py` | 导出本机数学题库质检摘要与逐题待审清单 |
 | `scripts/export_math.py` | 导出标准题型地图及本机只读覆盖报告 |
 | `scripts/eval_teaching.py` | 合成教学样例，默认模拟，`--live`调用配置模型；临时数据库 |
 | `scripts/browser_student.py` | 当前AI/题库、导入、报告界面的临时数据库/模拟AI浏览器验收 |

@@ -56,7 +56,7 @@ def state(db, at=None):
                 continue
             groups[tid]['evidence'].append({'identity':row['content_hash'],'attempt_id':row['id'],'stem':q['stem'],'answer':row['answer'],
                 'correct':bool(result['correct']),'error':result.get('error'),'time':row['submitted_at'],'source':'verified_template'})
-    where,args = bank.clauses(bank.Selection())
+    where,args = bank.clauses(bank.Selection(), include_history=True)
     for row in db.execute("SELECT a.*,q.data,q.content_hash FROM bank_attempts a JOIN bank_questions q ON q.id=a.question_id WHERE a.student_id=current_student() AND a.status='submitted' AND "+where+" ORDER BY a.submitted_at,a.id",args):
         completed += 1
         q, result = json.loads(row['data']), json.loads(row['result'])
@@ -68,7 +68,7 @@ def state(db, at=None):
             trusted = q.get('provenance',{}).get('teacher_reviewed') is True and t.get('classification_reviewed',True)
             if not trusted or row['assisted'] or result.get('assisted') or result.get('assessment_source')!='source_answer' or result.get('evidence_weight',0)<=0:
                 continue
-            group['evidence'].append({'identity':row['content_hash'],'attempt_id':row['id'],'stem':q['stem'],'answer':row['answer'],
+            group['evidence'].append({'identity':bank.evidence_identity(q),'attempt_id':row['id'],'stem':q['stem'],'answer':row['answer'],
                 'correct':bool(result['correct']),'error':None,'time':row['submitted_at'],'source':'reviewed_bank'})
     from app.observations import augment
     augment(db,groups)
@@ -113,6 +113,7 @@ class Next(BaseModel):
     unit_id: str | None = Field(default=None,max_length=100)
     type_id: str | None = Field(default=None,max_length=100)
     written: bool = False
+    choice: bool = False
     allow_challenge: bool = True
 
 
@@ -134,11 +135,13 @@ def create_router(settings):
 
     @router.post('/next')
     def next_question(body: Next):
+        if body.written and body.choice:
+            raise HTTPException(422, '请选择一种作答形式')
         book=BOOK_MAP[book_id()]
         if body.unit_id and body.unit_id not in {u['id'] for u in book['units']}:
             raise HTTPException(403,'该章节不在当前学习阶段')
         with connect(settings.database_path) as db:
-            if book_id()=='math-7-1' and not body.written and (not body.type_id or body.type_id in TYPE_MAP):
+            if book_id()=='math-7-1' and not body.written and not body.choice and (not body.type_id or body.type_id in TYPE_MAP):
                 db.execute("BEGIN IMMEDIATE")
                 replenish(db)
                 pools=verified_pool(db)
@@ -174,7 +177,7 @@ def create_router(settings):
                 db.execute("INSERT INTO attempts(id,student_id,question_id,assigned_at) VALUES(?,current_student(),?,?)",(attempt_id,q['id'],now()))
                 return {'attempt_id':attempt_id,'source':'verified','type_name':t['name'],'question':{**public_question(q),'answer_mode':'numeric'}}
             selection=bank.Selection(course_book_id=book_id(),course_unit_id=body.unit_id,tag_id=body.type_id,
-                                     answer_mode='written' if body.written else None,allow_challenge=body.allow_challenge)
+                                     answer_mode='written' if body.written else 'choice' if body.choice else None,allow_challenge=body.allow_challenge)
             value=bank.next_question(db,selection)
             return {**value,'source':'bank','type_name':' · '.join(t['label'] for t in value['question']['tags'] if t['kind']=='type')}
 

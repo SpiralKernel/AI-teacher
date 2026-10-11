@@ -66,14 +66,22 @@ def set_setting(db, body):
 
 
 def matched_goals(q):
-    """只匹配来源知识标签，不根据题干猜学期，也不修改来源年级或标签。"""
+    """来源标签与显式规则候选分别留痕；不把候选映射视为教材审定。"""
     if q.get("stage") != "junior":
         return []
-    labels = {normalize(str(t)) for t in q.get("knowledge_tags", [])}
+    labels = {normalize(str(t)) for t in [*q.get("knowledge_tags", []), *q.get('derived_knowledge_tags', [])]}
     found = []
     for target in GOALS.values():
         if target["subject"] != q["subject"]:
             continue
+        if q['subject'] == 'math':
+            book = BOOK_MAP[target['book_id']]
+            grade = book['grade']
+            if (q.get('grade') is not None and q['grade'] != grade) or grade < q.get('curriculum_minimum_grade', 7):
+                continue
+            floor = BOOK_MAP.get(q.get('curriculum_minimum_book', ''))
+            if floor and (grade, book['term']) < (floor['grade'], floor['term']):
+                continue
         matches = []
         for alias in target["aliases"]:
             key = normalize(alias)
@@ -93,13 +101,15 @@ def sync_questions(db, question_ids=None, force=False):
     changed = 0
     for row in rows:
         q = json.loads(row["data"])
-        signature = hashlib.sha256(dumps([VERSION, q["subject"], q["stage"], q.get("knowledge_tags", [])]).encode()).hexdigest()
+        signature = hashlib.sha256(dumps([VERSION, q["subject"], q["stage"], q.get("knowledge_tags", []),
+                                         q.get('derived_knowledge_tags', []), q.get('grade'), q.get('curriculum_minimum_grade'),
+                                         q.get('curriculum_minimum_book')]).encode()).hexdigest()
         if not force and existing.get(row["id"]) == signature:
             continue
         db.execute("DELETE FROM course_question_links WHERE question_id=?", (row["id"],))
         for goal_id, aliases in matched_goals(q):
             db.execute("INSERT INTO course_question_links VALUES(?,?,?,?)",
-                       (row["id"], goal_id, VERSION, dumps({"method": "source_knowledge_alias", "matched_aliases": aliases, "needs_review": True})))
+                       (row["id"], goal_id, VERSION, dumps({"method": "source_and_rule_candidate_alias" if q.get('derived_knowledge_tags') else "source_knowledge_alias", "matched_aliases": aliases, "needs_review": True})))
         db.execute("INSERT INTO course_mapping_state VALUES(?,?) ON CONFLICT(question_id) DO UPDATE SET signature=excluded.signature",
                    (row["id"], signature))
         changed += 1

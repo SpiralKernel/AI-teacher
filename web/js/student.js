@@ -16,6 +16,7 @@ import { createReportUI } from "./report.js";
     result: null,
     unit: "",
     written: false,
+    choice: false,
     challenge: true,
     aiType: "",
     messages: [],
@@ -169,6 +170,7 @@ import { createReportUI } from "./report.js";
       mode: "ai",
       unit: "",
       written: false,
+      choice: false,
     });
     notice.hidden = true;
   }
@@ -335,6 +337,7 @@ import { createReportUI } from "./report.js";
       unit_id: typeId ? null : S.unit || null,
       type_id: typeId,
       written: typeId ? false : S.written,
+      choice: typeId ? false : S.choice,
       allow_challenge: S.challenge,
     });
     Object.assign(S, {
@@ -425,9 +428,13 @@ import { createReportUI } from "./report.js";
       [
         ["numeric", "短答练习"],
         ["written", "文字 / 拍照题"],
+        ["choice", "选择题"],
       ],
-      S.written ? "written" : "numeric",
-      (v) => (S.written = v === "written"),
+      S.written ? "written" : S.choice ? "choice" : "numeric",
+      (v) => {
+        S.written = v === "written";
+        S.choice = v === "choice";
+      },
     );
     return el(
       "section",
@@ -481,7 +488,7 @@ import { createReportUI } from "./report.js";
           "p",
           { class: "tiny" },
           home.book.id === "math-7-1"
-            ? "短答题的答案已检查，独立完成后会更新题型状态。文字 / 拍照题可提交完整过程。"
+            ? "短答题的答案已检查，独立完成后会更新题型状态。选择题和文字 / 拍照题保留练习记录，来源答案仍需核对。"
             : "当前阶段使用与学习内容匹配的来源题。答案还需核对的题目会保存记录，暂不用于判断掌握状态。",
         ),
       ),
@@ -520,6 +527,10 @@ import { createReportUI } from "./report.js";
     );
     if (S.result) {
       const r = S.result;
+      const reference = q.answer_mode === "choice"
+        ? (q.options || []).filter((o) => String(r.answer).includes(o.key))
+            .map((o) => `${o.key}. ${o.text}`).join("；") || r.answer
+        : r.answer;
       node.append(
         el(
           "div",
@@ -535,7 +546,7 @@ import { createReportUI } from "./report.js";
                   ? "这道题答对了。"
                   : "这道题值得再看一步。",
           ),
-          el("p", {}, `参考答案：${r.answer}`),
+          el("p", {}, `参考答案：${reference}`),
           el(
             "ol",
             {},

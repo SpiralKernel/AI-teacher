@@ -70,7 +70,11 @@ def main():
         db_path=Path(temp)/'test.sqlite3';initialize(db_path)
         q={'id':'written','subject':'math','stage':'junior','grade':7,'term':1,'stem':'M 是线段 AB 的中点，AB=10cm，求 AM，并写出过程。','kind':'reference','status':'reference','options':[],
            'answer':'AM=5cm','steps':['中点将线段分成相等的两段。','AM=AB÷2=5cm。'],'difficulty':1,'knowledge_tags':['线段中点'],'type_tags':['线段中点关系求长度'],'tags_source':'source','provenance':{}}
-        with connect(db_path) as db:bank.import_records(db,'browser',[q],{})
+        choice={**q,'id':'choice','stem':'负数-3的绝对值是？','kind':'single_choice','status':'ready',
+                'options':[{'key':'A','text':'3'},{'key':'B','text':'-3'}],'answer':'A',
+                'knowledge_tags':['绝对值'],'type_tags':['负数的绝对值'],
+                'steps':['绝对值表示数轴上到原点的距离，-3到原点的距离是3。']}
+        with connect(db_path) as db:bank.import_records(db,'browser',[q,choice],{})
         env={**os.environ,'DATABASE_PATH':str(db_path),'AUTH_REQUIRED':'true','DEEPSEEK_API_KEY':'browser-test-only','DEEPSEEK_BASE_URL':f'http://127.0.0.1:{ai_port}'}
         process=subprocess.Popen([str(ROOT/'.venv/bin/uvicorn'),'app.main:app','--host','127.0.0.1','--port',str(port),'--no-access-log'],cwd=ROOT,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         try:
@@ -127,6 +131,15 @@ def main():
                 page.get_by_label('上传手写答案',exact=True).set_input_files({'name':'answer.png','mimeType':'image/png','buffer':png()});page.get_by_role('button',name='提交 AI 评阅',exact=True).click()
                 expect(page.get_by_role('heading',name='核对 AI 评阅')).to_be_visible();page.get_by_label('你确认的结果',exact=True).select_option('correct');page.get_by_text('我已核对图片转写与评价',exact=True).click();page.get_by_role('button',name='确认并保存',exact=True).click()
                 expect(page.get_by_role('heading',name='这道题答对了。')).to_be_visible()
+                page.get_by_label('作答方式',exact=True).select_option('choice')
+                page.get_by_role('button',name='开始练习',exact=True).click()
+                expect(page.get_by_text('负数-3的绝对值是？',exact=True)).to_be_visible()
+                page.locator('.choice').first.click()
+                page.get_by_role('button',name='提交答案',exact=True).click()
+                expect(page.get_by_role('heading',name='这道题答对了。')).to_be_visible()
+                expect(page.get_by_text('参考答案：A. 3',exact=True)).to_be_visible()
+                assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                page.screenshot(path=PREVIEWS/'preview-bank-choice-mobile.png',full_page=True,animations='disabled')
                 page.get_by_role('tab',name='AI老师',exact=True).click();page.get_by_role('button',name='导入练习',exact=False).click();expect(page.get_by_role('heading',name='题目不用重新抄。')).to_be_visible()
                 page.get_by_label('选择练习图片或PDF',exact=True).set_input_files({'name':'paper.png','mimeType':'image/png','buffer':png()});page.get_by_role('button',name='上传并预览',exact=True).click();page.get_by_role('button',name='开始识图',exact=True).click()
                 expect(page.get_by_label('第1题题干',exact=True)).to_be_visible(timeout=15000);page.get_by_label('第1题评价',exact=True).select_option('incorrect');page.get_by_text('我已核对这道题',exact=True).click();page.get_by_role('button',name='保存核对结果',exact=True).click()

@@ -12,7 +12,9 @@ from app.db import connect, initialize, replenish
 def main():
     parser = argparse.ArgumentParser(description="AI-teacher 数据维护")
     parser.add_argument("command", choices=["sync", "backup", "stats", "import-bank"])
-    parser.add_argument("--dataset", choices=["tal", "cjeval", "ceval", "all"], default="all")
+    parser.add_argument("--dataset", choices=["tal", "cjeval", "ceval", "cmm", "math", "all"], default="all")
+    parser.add_argument("--subject", choices=["math", "all"], default="all")
+    parser.add_argument("--math-quality", action="store_true", help="补充数学细分题型、复核并隔离异常答案")
     parser.add_argument("--source-root", type=Path)
     parser.add_argument("--stage", choices=["junior", "primary", "senior", "unknown", "all"], default="junior")
     args = parser.parse_args()
@@ -23,13 +25,25 @@ def main():
         from app.bank import import_records
         from app.datasets import iter_dataset, source_manifest
         root=args.source_root or settings.database_path.parent/"sources"
-        for dataset in (["cjeval", "tal", "ceval"] if args.dataset == "all" else [args.dataset]):
+        datasets = (["cjeval", "tal", "ceval", "cmm"] if args.dataset == "all" else
+                    ["cjeval", "tal", "cmm"] if args.dataset == "math" else [args.dataset])
+        manifests, records = {}, []
+        for dataset in datasets:
             manifest=source_manifest(root,dataset)
             if not manifest["count"]:
                 raise SystemExit(f"{dataset} 没有本地数据，请先运行 scripts/fetch_sources.py")
-            records=(q for q in iter_dataset(root,dataset) if args.stage=="all" or q["stage"]==args.stage)
+            manifests[dataset] = manifest
+            records.extend(q for q in iter_dataset(root,dataset)
+                           if (args.stage=="all" or q["stage"]==args.stage)
+                           and (args.subject=="all" or q["subject"]==args.subject))
+        if args.math_quality:
+            from app.math_quality import curate, summarize
+            import json
+            records = curate(records)
+            print(json.dumps(summarize(q for q in records if q['subject']=='math' and q['stage']=='junior'), ensure_ascii=False, indent=2))
+        for dataset in datasets:
             with connect(settings.database_path) as db:
-                result=import_records(db,dataset,records,manifest)
+                result=import_records(db,dataset,(q for q in records if q['provenance']['dataset']==dataset),manifests[dataset])
             print(f"{dataset}: {result}；筛选学段={args.stage}")
     elif args.command == "backup":
         destination = settings.database_path.parent / "backups" / (datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".sqlite3")

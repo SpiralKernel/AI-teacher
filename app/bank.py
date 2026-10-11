@@ -18,6 +18,14 @@ SUBJECTS = {
     "politics": "道德与法治", "science": "科学", "information": "信息技术",
 }
 STAGES = {"junior": "初中", "primary": "小学", "senior": "高中", "unknown": "学段待核对"}
+QUALITY_SNAPSHOT_FIELDS = ('quality', 'fine_type_annotations', 'derived_knowledge_tags', 'difficulty_basis',
+    'grade', 'term', 'difficulty', 'difficulty_raw', 'kind', 'status', 'stem', 'options', 'answer', 'steps',
+    'knowledge_tags', 'type_tags', 'derived_type_tags', 'tags_source', 'display_stem',
+    'curriculum_minimum_grade', 'curriculum_minimum_book', 'source_images', 'provenance')
+
+
+def quality_snapshot(q):
+    return {**{k: q.get(k) for k in QUALITY_SNAPSHOT_FIELDS}, 'has_missing_assets': bool(q.get('has_missing_assets'))}
 
 
 class Selection(BaseModel):
@@ -41,7 +49,7 @@ def register_tag(db, subject, stage, kind, label, origin="source"):
     label = unicodedata.normalize("NFKC", label).strip()[:500]
     tag_id = "tag:" + hashlib.sha256(f"{subject}:{stage}:{kind}:{normalized(label)}".encode()).hexdigest()[:24]
     db.execute("INSERT OR IGNORE INTO bank_taxonomy VALUES(?,?,?,?,?,?,?)",
-               (tag_id, subject, stage, kind, label, origin, int(origin in {"ai", "luna", "heuristic"})))
+               (tag_id, subject, stage, kind, label, origin, int(origin in {"ai", "luna", "heuristic", "source_derived"})))
     return tag_id
 
 
@@ -56,20 +64,38 @@ def import_records(db, dataset, records, manifest):
         counts["read"] += 1
         if q["subject"] not in SUBJECTS or q["stage"] not in STAGES:
             raise ValueError("不支持的科目或学段")
+        if q.get('quality'):
+            current = db.execute("SELECT data FROM bank_questions WHERE status!='superseded' AND (id=? OR (id>=? AND id<?)) LIMIT 1",
+                                 (q['id'],q['id']+':',q['id']+';')).fetchone()
+            if current and quality_snapshot(json.loads(current[0])) == quality_snapshot(q):
+                counts['duplicates'] += 1
+                continue
         # 题干相同但选项不同应保留；跨文件相同题按内容去重。
         digest = hashlib.sha256(normalized(q["stage"] + q["stem"] + dumps(q.get("options", [])) + str(q.get("answer", ""))).encode()).hexdigest()
+        if q.get('has_missing_assets'):
+            from app.math_quality import question_identity
+            digest = hashlib.sha256((q['stage'] + question_identity(q) + str(q.get('answer', ''))).encode()).hexdigest()
         existing = db.execute("SELECT id,data FROM bank_questions WHERE subject=? AND content_hash=?", (q["subject"], digest)).fetchone()
         if existing:
-            if json.loads(existing["data"])["kind"]==q["kind"]:
+            old = json.loads(existing['data'])
+            # A quality upgrade is a new immutable snapshot, even if the answer and
+            # stem stay the same. Previous attempts keep their original question.
+            upgrade = (bool(q.get('quality')) and old.get('provenance') == q.get('provenance')
+                       and quality_snapshot(old) != quality_snapshot(q))
+            if old["kind"]==q["kind"] and not upgrade:
                 counts["duplicates"] += 1
                 continue
-            digest=hashlib.sha256((digest+q["kind"]).encode()).hexdigest()
+            metadata = quality_snapshot(q)
+            digest=hashlib.sha256((digest+q["kind"]+(dumps(metadata) if upgrade else '')).encode()).hexdigest()
             if db.execute("SELECT 1 FROM bank_questions WHERE subject=? AND content_hash=?",(q["subject"],digest)).fetchone():
                 counts["duplicates"]+=1
                 continue
         prior=db.execute("SELECT data FROM bank_questions WHERE id=?", (q["id"],)).fetchone()
         if prior:
-            for version in db.execute("SELECT id,data FROM bank_questions WHERE id=? OR id LIKE ?",(q["id"],q["id"]+":%")).fetchall():
+            # Prefix range uses the primary-key index; LIKE without case-sensitive
+            # collation would scan the whole bank for every annotation upgrade.
+            for version in db.execute("SELECT id,data FROM bank_questions WHERE id=? OR (id>=? AND id<?)",
+                                      (q['id'],q['id']+':',q['id']+';')).fetchall():
                 old=json.loads(version["data"])
                 old.update(can_practice=False,status="superseded")
                 old["issues"]=[*old.get("issues",[]),"superseded_source_version"]
@@ -81,6 +107,8 @@ def import_records(db, dataset, records, manifest):
         if any(re.search(r"缺.*图|missing.*(?:image|asset)|requires_asset_review", str(issue), re.I) for issue in q.get("issues", [])):
             q["can_practice"] = False
             q["has_missing_assets"] = True
+        if q.get('quality') and any(flag in q['quality'].get('flags', []) for flag in ('missing_solution','fine_type_pending')):
+            q['can_practice'] = False
         tags = []
         for kind, field in (("knowledge", "knowledge_tags"), ("type", "type_tags")):
             for label in dict.fromkeys(q.get(field, [])):
@@ -91,6 +119,11 @@ def import_records(db, dataset, records, manifest):
         for label in q.get("derived_type_tags", []):
             tag_id = register_tag(db, q["subject"], q["stage"], "type", label, "source_derived")
             tags.append({"id": tag_id, "kind": "type", "label": label, "origin": "source_derived"})
+        for annotation in q.get('fine_type_annotations', []):
+            label, origin = annotation['label'], annotation['origin']
+            tag_id = register_tag(db, q['subject'], q['stage'], 'type', label, origin)
+            if not any(t['id'] == tag_id for t in tags):
+                tags.append({'id': tag_id, 'kind': 'type', 'label': label, 'origin': origin})
         q["tags"] = tags
         db.execute("INSERT INTO bank_questions VALUES(?,?,?,?,?,?,?,?,?,?)",
                    (q["id"], dataset, q["subject"], q["stage"], q["kind"], q["status"], q["difficulty"], digest, dumps(q), now()))
@@ -106,8 +139,10 @@ def import_records(db, dataset, records, manifest):
 
 def public(q, reveal=False):
     fields = ("id", "subject", "stage", "grade", "term", "stem", "options", "kind", "answer_mode", "difficulty",
-              "difficulty_raw", "tags", "tags_source", "status", "issues", "provenance", "can_practice", "has_missing_assets")
+              "difficulty_raw", "difficulty_basis", "tags", "tags_source", "status", "issues", "provenance", "can_practice", "has_missing_assets")
     result = {k: q.get(k) for k in fields}
+    if q.get('display_stem'):
+        result['stem'] = q['display_stem']
     if reveal:
         result.update(answer=q["answer"], steps=q["steps"])
     return result
@@ -124,14 +159,14 @@ def catalog(db):
             "note": "初中题集覆盖多个年级；未标年级/学期的题不会自动视为七上。来源答案尚未逐题教师审定。"}
 
 
-def clauses(selection, playable=False):
+def clauses(selection, playable=False, include_history=False):
     if scope():
         if selection.subject != "math" or selection.stage != "junior" or (selection.course_book_id and selection.course_book_id != book_id()):
             raise HTTPException(403,"题库只开放当前学习阶段")
         selection = selection.model_copy(update={"course_book_id":book_id()})
     if selection.subject not in SUBJECTS or selection.stage not in STAGES:
         raise HTTPException(422, "请选择已有学科与学段")
-    where = ["q.subject=?", "q.stage=?", "q.status NOT IN ('quarantine','superseded')"]
+    where = ["q.subject=?", "q.stage=?", "q.status!='quarantine'" if include_history else "q.status NOT IN ('quarantine','superseded')"]
     args = [selection.subject, selection.stage]
     if scope():
         where += ["(json_extract(q.data,'$.grade') IS NULL OR json_extract(q.data,'$.grade')=?)", "(json_extract(q.data,'$.term') IS NULL OR json_extract(q.data,'$.term')=?)"]
@@ -187,7 +222,7 @@ def get_attempt(db, attempt_id):
     if not row:
         raise HTTPException(404, "题库作答不存在")
     if scope():
-        where,args=clauses(Selection())
+        where,args=clauses(Selection(), include_history=row['status']=='submitted')
         if not db.execute("SELECT 1 FROM bank_questions q WHERE q.id=? AND "+where,[row["question_id"],*args]).fetchone():
             raise HTTPException(403,"该题不在当前学习阶段")
     return row, json.loads(row["data"])
@@ -239,10 +274,21 @@ def canonical_choice(value, q):
     return answer
 
 
+def evidence_identity(q):
+    """Annotation revisions are still the same independent exercise."""
+    origin = q.get('provenance', {})
+    if origin.get('dataset') and origin.get('source_id'):
+        return f"bank:{origin['dataset']}:{origin['source_id']}"
+    return hashlib.sha256(normalized(q['stage']+q['stem']+dumps(q.get('options', []))+str(q.get('answer',''))).encode()).hexdigest()
+
+
 def finish(db, row, q, answer, verdict, base_weight, explanation=None):
     if row["status"] != "assigned":
         raise HTTPException(409, "这道作答已完成或已切换")
-    repeated = db.execute("SELECT 1 FROM bank_attempts WHERE student_id=current_student() AND question_id=? AND status='submitted' AND json_extract(result,'$.evidence_weight')>0", (q["id"],)).fetchone()
+    identity = evidence_identity(q)
+    repeated = any(evidence_identity(json.loads(previous[0])) == identity for previous in db.execute(
+        """SELECT q.data FROM bank_attempts a JOIN bank_questions q ON q.id=a.question_id
+        WHERE a.student_id=current_student() AND a.status='submitted' AND json_extract(a.result,'$.evidence_weight')>0"""))
     weight = 0 if repeated or verdict not in {"correct", "incorrect"} else base_weight * (.35 if row["assisted"] and verdict == "correct" else 1)
     result = {"correct": verdict == "correct", "verdict": verdict, "answer": q["answer"], "steps": q["steps"],
               "evidence_weight": weight, "assisted": bool(row["assisted"]), "repeated": bool(repeated), "explanation": explanation,

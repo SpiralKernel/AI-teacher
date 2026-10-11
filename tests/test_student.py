@@ -53,6 +53,54 @@ def source(qid,grade=7,term=1,knowledge='绝对值',written=False,reviewed=False
       'knowledge_tags':[knowledge],'type_tags':['负数的绝对值'],'tags_source':'source','provenance':{'teacher_reviewed':reviewed}}
 
 
+def test_student_choice_entry_respects_stage_and_does_not_inflate_trusted_evidence(setup):
+    client,settings=setup
+    register(client)
+    with connect(settings.database_path) as db:
+        bank.import_records(db,'choice-test',[source('junior-choice'),
+            source('future-choice',grade=9,term=1,knowledge='二次函数')],{})
+    response=client.post('/api/v1/study/next',json={'choice':True,'allow_challenge':False})
+    assert response.status_code==200,response.text
+    work=response.json()
+    assert work['source']=='bank' and work['question']['id']=='junior-choice'
+    assert work['question']['answer_mode']=='choice' and 'answer' not in work['question']
+    result=client.post(f"/api/v1/bank/attempts/{work['attempt_id']}/answer",json={'answer':'A'})
+    assert result.status_code==200 and result.json()['correct']
+    assert home(client)['completed']==1
+    assert sum(t['independent_count'] for t in home(client)['types'])==0
+    assert client.post('/api/v1/study/next',json={'choice':True,'written':True}).status_code==422
+    assert client.post('/api/v1/auth/stage',json={'grade':8,'term':1}).status_code==200
+    assert client.post('/api/v1/study/next',json={'choice':True}).status_code==404
+
+
+def test_annotation_upgrade_preserves_history_and_does_not_count_same_item_twice(setup):
+    from app.math_quality import annotate
+    client,settings=setup
+    register(client)
+    raw=source('reviewed-source',reviewed=True)
+    raw['provenance'].update(dataset='quality-test',source_id='stable-source-id')
+    with connect(settings.database_path) as db:
+        bank.import_records(db,'quality-test',[raw],{})
+    work=client.post('/api/v1/study/next',json={'choice':True}).json()
+    first=client.post(f"/api/v1/bank/attempts/{work['attempt_id']}/answer",json={'answer':'A'}).json()
+    assert first['evidence_weight']==1
+    assert type_state(client,'m7a:absolute')['independent_count']==1
+    with connect(settings.database_path) as db:
+        bank.import_records(db,'quality-test',[annotate(raw)],{})
+    assert client.get(f"/api/v1/bank/attempts/{work['attempt_id']}").status_code==200
+    assert home(client)['completed']==1
+    assert type_state(client,'m7a:absolute')['independent_count']==1
+    again=client.post('/api/v1/study/next',json={'choice':True}).json()
+    assert again['question']['id']!=work['question']['id']
+    second=client.post(f"/api/v1/bank/attempts/{again['attempt_id']}/answer",json={'answer':'A'}).json()
+    assert second['repeated'] and second['evidence_weight']==0
+    assert type_state(client,'m7a:absolute')['independent_count']==1
+    report=client.get('/api/v1/reports?period=all').json()
+    assert report['summary']['attempts']==2 and report['summary']['independent']==1
+    assert client.post('/api/v1/auth/stage',json={'grade':8,'term':1}).status_code==200
+    assert client.get(f"/api/v1/bank/attempts/{work['attempt_id']}").status_code==403
+
+
 def test_login_wall_and_first_account_inherits_legacy_only(setup):
     client,settings=setup
     with connect(settings.database_path) as db:
