@@ -10,7 +10,7 @@ from app.annotation_grading import feedback_detail
 from app.config import Settings
 from app.db import connect, initialize
 from app.main import create_app
-from app.math_annotations import Entry, apply_batch, load_entries
+from app.math_annotations import Entry, apply_batch, load_entries, iter_entries
 from app.question_annotation import Annotation, source_fingerprint, validate_for_question
 
 
@@ -78,6 +78,25 @@ def test_batch_rolls_back_snapshots_if_later_dataset_import_fails(db_path,monkey
     monkeypatch.setattr(bank,'import_records',fail_second)
     with connect(db_path) as db:
         with pytest.raises(RuntimeError):apply_batch(db,[entry(question()),entry(other)],dry_run=False)
+        assert db.execute('SELECT count(*) FROM bank_questions').fetchone()[0]==2
+        assert all(json.loads(r[0]).get('annotation') is None for r in db.execute('SELECT data FROM bank_questions'))
+
+
+def test_streaming_batch_rolls_back_flushed_snapshots_on_late_invalid_input(db_path,tmp_path,monkeypatch):
+    from app import math_annotations
+    monkeypatch.setattr(math_annotations,'BATCH_SIZE',1)
+    q=question('other');q.update(stem='计算1+3。',answer='4')
+    with connect(db_path) as db:bank.import_records(db,'annotation-test',[q],{})
+    file=tmp_path/'stream.jsonl'
+    file.write_text(entry(question()).model_dump_json()+'\n'+entry(q).model_dump_json()+'\ninvalid JSON\n')
+    calls=[];original=bank.import_records
+    def record_import(*args,**kwargs):
+        calls.append(len(args[2]))
+        return original(*args,**kwargs)
+    monkeypatch.setattr(bank,'import_records',record_import)
+    with connect(db_path) as db:
+        with pytest.raises(ValueError):apply_batch(db,iter_entries([file]),dry_run=False)
+        assert calls==[1,1]
         assert db.execute('SELECT count(*) FROM bank_questions').fetchone()[0]==2
         assert all(json.loads(r[0]).get('annotation') is None for r in db.execute('SELECT data FROM bank_questions'))
 

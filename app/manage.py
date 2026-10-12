@@ -29,10 +29,10 @@ def main():
     if args.command not in {"backup", "import-math-annotations"}:
         initialize(settings.database_path)
     if args.command == 'import-math-annotations':
-        from app.math_annotations import load_entries, apply_batch
+        from app.math_annotations import iter_entries, apply_batch
         import json
         if not args.annotations:parser.error('需要 --annotations 指定标注分片')
-        entries = load_entries(args.annotations)
+        entries = iter_entries(args.annotations)
         with connect(settings.database_path) as db:
             print(json.dumps(apply_batch(db,entries,dry_run=not args.apply),ensure_ascii=False,indent=2))
     elif args.command in {'grant-admin','revoke-admin'}:
