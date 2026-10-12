@@ -46,7 +46,8 @@ class MockAI(BaseHTTPRequestHandler):
             value=json.loads(data['messages'][1]['content'])['learning_material']
             content={'decisions':[{'candidate_index':c['candidate_index'],'verdict':'supported','evidence_quote':c['evidence_quote'],'reason':'这段作答将距离写成了负数，需要纠正符号。'} for c in value['candidates']]}
         elif '学习评阅助手' in system:
-            content={'transcribed_answer':'根据中点关系，AM=5。','verdict':'correct','reason':'中点把线段分成相等的两段。','confidence':'high'}
+            content={'transcribed_answer':'根据中点关系，AM=5，MB=5。','verdict':'correct','reason':'中点把线段分成相等的两段。','confidence':'high',
+                'part_feedback':[{'part_id':pid,'verdict':'correct','reason':'中点关系与长度计算正确。','evidence_quote':quote} for pid,quote in [('p1','AM=5'),('p2','MB=5')]]}
         else:
             value=json.loads(user);context=json.loads(data['messages'][1]['content'])['learning_material']
             confirmed=context.get('image_confirmed',False)
@@ -74,6 +75,11 @@ def main():
                 'options':[{'key':'A','text':'3'},{'key':'B','text':'-3'}],'answer':'A',
                 'knowledge_tags':['绝对值'],'type_tags':['负数的绝对值'],
                 'steps':['绝对值表示数轴上到原点的距离，-3到原点的距离是3。']}
+        q['stem']='M 是线段 AB 的中点，AB=10cm。（1）求 AM；（2）求 MB。写出过程。'
+        q['answer']='AM=5cm，MB=5cm'
+        q['annotation']={'schema_version':1,'response_format':'composite','difficulty':{'level':1,'basis':'根据中点定义求两段长度'},
+            'parts':[{'id':pid,'prompt':prompt,'reference_answer':'5cm','knowledge_tags':['线段中点'],'type_tags':['线段中点关系求长度'],
+                      'rubric':[{'id':'midpoint','description':'依据中点定义得到两段各等于AB的一半'}]} for pid,prompt in [('p1','求 AM，并说明依据。'),('p2','求 MB，并说明依据。')]]}
         with connect(db_path) as db:bank.import_records(db,'browser',[q,choice],{})
         env={**os.environ,'DATABASE_PATH':str(db_path),'AUTH_REQUIRED':'true','AI_PROVIDER':'deepseek',
              'AI_API_KEY':'browser-test-only','AI_BASE_URL':f'http://127.0.0.1:{ai_port}',
@@ -133,8 +139,14 @@ def main():
                 page.unroute('**/api/v1/study/next')
                 page.get_by_label('作答方式',exact=True).select_option('written');page.get_by_role('button',name='继续练习',exact=True).click()
                 expect(page.get_by_label('完整解答',exact=True)).to_be_visible();page.get_by_label('完整解答',exact=True).fill('由中点定义，AM=5。')
+                page.get_by_label('第 1 问解答',exact=True).fill('AM=10÷2=5cm。')
+                page.get_by_label('第 2 问解答',exact=True).fill('MB=AM=5cm。')
                 page.get_by_label('上传手写答案',exact=True).set_input_files({'name':'answer.png','mimeType':'image/png','buffer':png()});page.get_by_role('button',name='提交 AI 评阅',exact=True).click()
-                expect(page.get_by_role('heading',name='核对 AI 评阅')).to_be_visible();page.get_by_label('你确认的结果',exact=True).select_option('correct');page.get_by_text('我已核对图片转写与评价',exact=True).click();page.get_by_role('button',name='确认并保存',exact=True).click()
+                expect(page.get_by_role('heading',name='核对 AI 评阅')).to_be_visible()
+                expect(page.get_by_role('heading',name='逐问反馈',exact=True)).to_be_visible()
+                expect(page.get_by_text('当前提供文字反馈，分数待核对。',exact=True)).to_be_visible()
+                page.screenshot(path=PREVIEWS/'preview-annotated-review-mobile.png',full_page=True,animations='disabled')
+                page.get_by_label('你确认的结果',exact=True).select_option('correct');page.get_by_text('我已核对图片转写与评价',exact=True).click();page.get_by_role('button',name='确认并保存',exact=True).click()
                 expect(page.get_by_role('heading',name='这道题答对了。')).to_be_visible()
                 page.get_by_label('作答方式',exact=True).select_option('choice')
                 page.get_by_role('button',name='开始练习',exact=True).click()

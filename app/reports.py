@@ -85,8 +85,8 @@ def snapshot(db, period):
     where,args=bank.clauses(bank.Selection(), include_history=True)
     for row in db.execute("SELECT a.*,q.data,q.content_hash FROM bank_attempts a JOIN bank_questions q ON q.id=a.question_id WHERE a.student_id=current_student() AND a.status='submitted' AND "+where+" ORDER BY a.submitted_at,a.id",args):
         q,r=json.loads(row['data']),json.loads(row['result']);identity=bank.evidence_identity(q)
-        independent=q.get('provenance',{}).get('teacher_reviewed') is True and not row['assisted'] and r.get('assessment_source')=='source_answer' and r.get('evidence_weight',0)>0 and identity not in seen
-        seen.add(identity)
+        independent=not q.get('evidence_invalidated') and q.get('provenance',{}).get('teacher_reviewed') is True and not row['assisted'] and r.get('assessment_source')=='source_answer' and r.get('evidence_weight',0)>0 and identity not in seen
+        if not q.get('evidence_invalidated'):seen.add(identity)
         from app.study import question_types
         types=question_types(db,q)
         independent=independent and bool(types) and all(t.get('classification_reviewed',True) for t in types)

@@ -50,6 +50,8 @@ AI-teacher/
 | --- | --- | --- |
 | 学生账号、会话、请求作用域身份 | `app/auth.py`、`app/identity.py`、`app/main.py` | `tests/test_student.py` |
 | 一次性邀请码、私密名单生成和原子消费 | `app/invites.py`、`app/auth.py`、`app/manage.py`、`app/db.py` | `tests/test_invites.py` |
+| 题库工作台、管理员、题干/答案/标签审核与版本 | `app/admin.py`、`web/admin.html`、`web/js/admin.js`、`web/css/admin.css` | `tests/test_admin_content.py`、`scripts/browser_admin.py` |
+| 冻结题库版本、下载清单、联网校验与原子安装 | `app/content.py`、`app/manage.py` | `tests/test_admin_content.py` |
 | 题库与可靠题型证据、复测 | `app/study.py`、`web/js/student.js`、`web/css/student.css` | `tests/test_student.py`、`scripts/browser_student.py` |
 | 自由答疑与可纠正的学习线索 | `app/teacher.py`、`app/observations.py`、`web/js/teacher.js` | `tests/test_teacher_reports.py` |
 | 学生记忆生命周期、衰减、相关检索和复测调度 | `app/memory.py`、`app/study.py`、`app/reports.py` | `tests/test_memory.py`、`scripts/eval_memory.py` |
@@ -69,6 +71,8 @@ AI-teacher/
 | 全科题库、标签、筛选、选择判分、画像 | `app/bank.py` | `tests/test_bank.py` |
 | 外部题库适配与去重 | `app/datasets.py` | `tests/test_datasets.py` |
 | 数学细分候选标注、精确答案检查与隔离 | `app/math_quality.py` | `tests/test_math_quality.py` |
+| 完整题目标注、小问、答案规则和候选批次 | `app/question_annotation.py`、`app/math_annotations.py` | `tests/test_question_annotations.py`、[标注规则](question-annotation.md) |
+| 大题逐问评阅、证据校验和建议分 | `app/annotation_grading.py`、`web/js/annotation-editor.js` | `tests/test_question_annotations.py` |
 | 主观题AI评阅及辅导 | `app/bank_ai.py` | `tests/test_bank.py`、`tests/test_courses.py` |
 | 原数学辅导提示词与API调用 | `app/tutor.py` | `tests/test_learning.py` |
 | 细分题型注册和知识点证据 | `app/question_types.py`、`app/learning.py` | 对应同名测试文件 |

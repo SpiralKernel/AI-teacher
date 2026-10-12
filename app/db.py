@@ -43,7 +43,7 @@ def initialize(path: Path):
         path.chmod(0o600)
         db.execute("PRAGMA journal_mode = WAL")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version > 10:
+        if version > 11:
             raise RuntimeError("数据库版本高于应用支持版本，拒绝降级打开。")
         if version == 0:
             db.executescript("""
@@ -237,6 +237,30 @@ def initialize(path: Path):
                     CHECK((consumed_at IS NULL AND used_by IS NULL) OR
                           (consumed_at IS NOT NULL AND used_by IS NOT NULL)));
                 PRAGMA user_version=10;
+                COMMIT;
+            """)
+        if version < 11:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS admin_accounts(student_id TEXT PRIMARY KEY REFERENCES accounts(student_id),created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS bank_editor_items(
+                    id TEXT PRIMARY KEY,source_kind TEXT,source_id TEXT,source_hash TEXT,
+                    revision INTEGER NOT NULL,data TEXT NOT NULL,state TEXT NOT NULL,
+                    published_id TEXT REFERENCES bank_questions(id),updated_at TEXT NOT NULL);
+                CREATE UNIQUE INDEX IF NOT EXISTS editor_source ON bank_editor_items(source_kind,source_id) WHERE source_id IS NOT NULL;
+                CREATE TABLE IF NOT EXISTS bank_editor_events(
+                    id INTEGER PRIMARY KEY,item_id TEXT NOT NULL REFERENCES bank_editor_items(id),revision INTEGER NOT NULL,
+                    action TEXT NOT NULL,actor TEXT NOT NULL REFERENCES accounts(student_id),data TEXT NOT NULL,created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS content_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS content_releases(
+                    version INTEGER PRIMARY KEY AUTOINCREMENT,publisher_id TEXT NOT NULL,checksum TEXT NOT NULL,
+                    item_count INTEGER NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS content_installs(
+                    publisher_id TEXT PRIMARY KEY,version INTEGER NOT NULL,checksum TEXT NOT NULL,installed_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS content_installed_items(
+                    publisher_id TEXT NOT NULL,family TEXT NOT NULL,remote_id TEXT NOT NULL,local_id TEXT NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(publisher_id,family,remote_id));
+                PRAGMA user_version=11;
                 COMMIT;
             """)
         columns={r[1] for r in db.execute('PRAGMA table_info(imports)')}

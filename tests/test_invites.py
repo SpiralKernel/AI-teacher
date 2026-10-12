@@ -83,7 +83,7 @@ def test_invite_generation_refuses_overwrite_and_migration_preserves_accounts(in
     initialize(settings.database_path)
     with connect(settings.database_path) as db:
         assert tuple(db.execute('SELECT * FROM accounts').fetchone()) == before
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 10
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 11
     path = tmp_path/'private.txt'
     create_invites(settings.database_path, 2, path)
     assert path.stat().st_mode & 0o777 == 0o600

@@ -1590,3 +1590,5 @@ button:hover {
     margin-top: 0;
   }
 }
+/* Structured written questions keep each subquestion readable on small screens. */
+.question-parts{display:grid;gap:16px;margin:18px 0;min-width:0}.question-part{padding:16px;border:1px solid #F5E2DA;border-radius:14px;min-width:0}.part-prompt{white-space:pre-wrap;overflow-wrap:anywhere}.grading-detail{padding:14px;background:#FFF8F5;border-radius:12px;margin:12px 0;overflow-wrap:anywhere}.grading-detail blockquote{border-left:3px solid #85A9AF;margin:8px 0;padding:6px 12px;white-space:pre-wrap}.question-parts summary{cursor:pointer}

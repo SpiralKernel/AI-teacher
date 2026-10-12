@@ -11,7 +11,12 @@ from app.db import connect, initialize, replenish
 
 def main():
     parser = argparse.ArgumentParser(description="AI-teacher 数据维护")
-    parser.add_argument("command", choices=["sync", "backup", "stats", "import-bank", "create-invites"])
+    parser.add_argument("command", choices=["sync", "backup", "stats", "import-bank", "create-invites", "grant-admin", "revoke-admin", "publish-content", "import-content", "import-math-annotations"])
+    parser.add_argument('--annotations', type=Path, nargs='+', help='Luna 候选标注 JSONL 分片')
+    parser.add_argument('--apply', action='store_true', help='通过全量检查后应用；默认只检查，不写题库')
+    parser.add_argument('--username', help='授予或撤销维护权限的已有账号')
+    parser.add_argument('--file', type=Path, help='离线题库更新包')
+    parser.add_argument('--manifest', type=Path, help='与更新包配套的版本清单')
     parser.add_argument("--count", type=int, default=10, help="邀请码数量（1—100）")
     parser.add_argument("--output", type=Path, help="邀请码私密文件路径，必须尚不存在")
     parser.add_argument("--dataset", choices=["tal", "cjeval", "ceval", "cmm", "math", "all"], default="all")
@@ -21,9 +26,30 @@ def main():
     parser.add_argument("--stage", choices=["junior", "primary", "senior", "unknown", "all"], default="junior")
     args = parser.parse_args()
     settings = Settings()
-    if args.command != "backup":
+    if args.command not in {"backup", "import-math-annotations"}:
         initialize(settings.database_path)
-    if args.command == "create-invites":
+    if args.command == 'import-math-annotations':
+        from app.math_annotations import load_entries, apply_batch
+        import json
+        if not args.annotations:parser.error('需要 --annotations 指定标注分片')
+        entries = load_entries(args.annotations)
+        with connect(settings.database_path) as db:
+            print(json.dumps(apply_batch(db,entries,dry_run=not args.apply),ensure_ascii=False,indent=2))
+    elif args.command in {'grant-admin','revoke-admin'}:
+        from app.admin import grant_admin
+        if not args.username:parser.error('需要 --username 指定已有账号')
+        with connect(settings.database_path) as db:grant_admin(db,args.username,revoke=args.command=='revoke-admin')
+        print('维护权限已更新')
+    elif args.command == 'publish-content':
+        from app.content import publish_release
+        import json
+        with connect(settings.database_path) as db:print(json.dumps(publish_release(db),ensure_ascii=False))
+    elif args.command == 'import-content':
+        from app.content import install_package
+        import json
+        if not args.file or not args.manifest:parser.error('需要 --file 更新包和 --manifest 版本清单')
+        with connect(settings.database_path) as db:print(install_package(db,args.file.read_bytes(),json.loads(args.manifest.read_text())))
+    elif args.command == "create-invites":
         from app.invites import create_invites
         if args.output is None:
             parser.error('create-invites 需要 --output 指定私密名单路径')

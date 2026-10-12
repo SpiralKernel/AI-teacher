@@ -69,6 +69,10 @@ def matched_goals(q):
     """来源标签与显式规则候选分别留痕；不把候选映射视为教材审定。"""
     if q.get("stage") != "junior":
         return []
+    if q.get('curriculum_goal_ids'):
+        return [(gid, ['人工确认']) for gid in q['curriculum_goal_ids'] if gid in GOALS
+                and GOALS[gid]['subject'] == q['subject']
+                and GOALS[gid]['book_id'] == f"{q['subject']}-{q.get('grade')}-{q.get('term')}"]
     labels = {normalize(str(t)) for t in [*q.get("knowledge_tags", []), *q.get('derived_knowledge_tags', [])]}
     found = []
     for target in GOALS.values():
@@ -103,13 +107,13 @@ def sync_questions(db, question_ids=None, force=False):
         q = json.loads(row["data"])
         signature = hashlib.sha256(dumps([VERSION, q["subject"], q["stage"], q.get("knowledge_tags", []),
                                          q.get('derived_knowledge_tags', []), q.get('grade'), q.get('curriculum_minimum_grade'),
-                                         q.get('curriculum_minimum_book')]).encode()).hexdigest()
+                                         q.get('curriculum_minimum_book'), q.get('term'), q.get('curriculum_goal_ids')]).encode()).hexdigest()
         if not force and existing.get(row["id"]) == signature:
             continue
         db.execute("DELETE FROM course_question_links WHERE question_id=?", (row["id"],))
         for goal_id, aliases in matched_goals(q):
             db.execute("INSERT INTO course_question_links VALUES(?,?,?,?)",
-                       (row["id"], goal_id, VERSION, dumps({"method": "source_and_rule_candidate_alias" if q.get('derived_knowledge_tags') else "source_knowledge_alias", "matched_aliases": aliases, "needs_review": True})))
+                       (row["id"], goal_id, VERSION, dumps({"method": "manual_review" if q.get('curriculum_goal_ids') else "source_and_rule_candidate_alias" if q.get('derived_knowledge_tags') else "source_knowledge_alias", "matched_aliases": aliases, "needs_review": not bool(q.get('curriculum_goal_ids'))})))
         db.execute("INSERT INTO course_mapping_state VALUES(?,?) ON CONFLICT(question_id) DO UPDATE SET signature=excluded.signature",
                    (row["id"], signature))
         changed += 1
@@ -129,7 +133,7 @@ def evidence(db, subject):
         WHERE a.student_id=current_student() AND a.status='submitted' AND q.subject=? AND l.version=?""", (subject, VERSION))
     for row in rows:
         value, q = json.loads(row["result"]), json.loads(row["data"])
-        if value.get("evidence_weight", 0) <= 0:
+        if value.get("evidence_weight", 0) <= 0 or q.get('evidence_invalidated'):
             continue
         # 来源同一题的不同快照不重复作为同目标证据。
         origin = q.get("provenance", {})

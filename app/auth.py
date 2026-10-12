@@ -49,7 +49,8 @@ def digest(token):
 def identity(db, token):
     if not token or len(token) > 200:
         return None
-    row = db.execute('''SELECT s.student_id,p.grade,p.term,a.username,t.nickname FROM auth_sessions s
+    row = db.execute('''SELECT s.student_id,p.grade,p.term,a.username,t.nickname,
+        EXISTS(SELECT 1 FROM admin_accounts ad WHERE ad.student_id=s.student_id) AS is_admin FROM auth_sessions s
         JOIN student_scopes p ON p.student_id=s.student_id JOIN accounts a ON a.student_id=s.student_id
         JOIN students t ON t.id=s.student_id WHERE s.token_hash=? AND s.expires>?''', (digest(token), time.time())).fetchone()
     return dict(row) if row else None

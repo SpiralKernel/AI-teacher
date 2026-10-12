@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     auth_required: bool = True
     registration_enabled: bool = True
     registration_requires_invite: bool = False
+    content_source_url: str = ''
+    content_source_key: str = Field(default='', repr=False)
+    content_feed_key: str = Field(default='', repr=False)
     database_path: Path = ROOT / "data/ai-teacher.sqlite3"
     # 保留原Python字段兼容维护脚本；通用环境变量优先，旧DEEPSEEK_*继续可用。
     deepseek_api_key: str = Field(default='', repr=False, validation_alias=AliasChoices('AI_API_KEY', 'DEEPSEEK_API_KEY'))

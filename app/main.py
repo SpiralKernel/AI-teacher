@@ -63,6 +63,10 @@ def create_app(settings: Settings | None = None):
     app.include_router(create_router(settings))
     app.include_router(create_course_router(settings))
     app.include_router(create_math_router(settings))
+    from app.admin import create_router as admin_router
+    from app.content import create_router as content_router
+    app.include_router(admin_router(settings))
+    app.include_router(content_router(settings))
     tutor_slots = asyncio.Semaphore(1)
     vision_slots = asyncio.Semaphore(1)
 
@@ -97,6 +101,7 @@ def create_app(settings: Settings | None = None):
             with connect(settings.database_path) as db:
                 value = auth.identity(db,request.cookies.get(auth.COOKIE))
             public = {'/api/v1/health','/api/v1/auth/session','/api/v1/auth/register','/api/v1/auth/login','/api/v1/auth/logout'}
+            public |= {'/api/v1/content/feed/manifest','/api/v1/content/feed/package'}
             if not value and request.url.path not in public:
                 return JSONResponse(status_code=401,content={'detail':'请先登录自己的学习账号'},headers={'Cache-Control':'no-store'})
         token = current.set(value)
@@ -306,6 +311,10 @@ def create_app(settings: Settings | None = None):
     @app.get("/", include_in_schema=False)
     def index():
         return FileResponse(ROOT / "web/index.html")
+
+    @app.get('/admin', include_in_schema=False)
+    def admin_page():
+        return FileResponse(ROOT / 'web/admin.html')
 
     return app
 

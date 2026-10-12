@@ -136,7 +136,7 @@ def test_diagnostic_persists_after_restart_and_keeps_old_records(setup):
         assert saved['answered']==1 and saved['current']['position']==1
         assert other.get('/api/v1/student').json()['completed']==1
         with connect(settings.database_path) as db:
-            assert db.execute('PRAGMA user_version').fetchone()[0]==10
+            assert db.execute('PRAGMA user_version').fetchone()[0]==11
 
 
 def test_coverage_excludes_corrupt_and_unrecognized_question_sources(setup):

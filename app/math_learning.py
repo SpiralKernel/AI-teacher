@@ -32,6 +32,12 @@ def verified_pool(db):
     return pools
 
 
+def practice_pool(db):
+    """已撤下的远端题不再分配，历史核验证据仍保留。"""
+    inactive={r[0] for r in db.execute("SELECT local_id FROM content_installed_items WHERE family='original' AND active=0 AND local_id LIKE 'remote:%'")}
+    return defaultdict(list,{tid:[q for q in items if q['id'] not in inactive] for tid,items in verified_pool(db).items()})
+
+
 def states(db):
     evidence = defaultdict(list)
     seen = set()

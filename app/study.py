@@ -15,7 +15,7 @@ import uuid
 import random
 from app.identity import book_id, student_id
 from app.math_catalog import TYPES, TYPE_MAP, resolve_type
-from app.math_learning import verified_pool
+from app.math_learning import verified_pool, practice_pool
 from app.question_types import template_type_id
 from app.questions import public_question
 from app.materials import normalized_image, MAX_FILE, MAX_TOTAL
@@ -32,9 +32,9 @@ def question_types(db, q):
         canonical = resolve_type(tag['id'], tag['label']) if book_id() == 'math-7-1' else None
         if canonical:
             result.append(TYPE_MAP[canonical])
-        elif tag.get('origin') in {'source_derived', 'source', 'ai', 'luna', 'heuristic'} and len(tag['label']) >= 6 and tag['label'] not in {'single_choice','multiple_choice','competition_math'}:
+        elif tag.get('origin') in {'source_derived', 'source', 'ai', 'luna', 'heuristic', 'teacher'} and len(tag['label']) >= (4 if tag.get('origin')=='teacher' else 6) and tag['label'] not in {'single_choice','multiple_choice','competition_math'}:
             review=db.execute('SELECT needs_review FROM bank_taxonomy WHERE id=?',(tag['id'],)).fetchone()
-            result.append({'id':tag['id'], 'name':tag['label'], 'unit_id':None, 'can_do':'围绕这一具体题型独立完成练习。', 'classification_reviewed':bool(review and not review[0])})
+            result.append({'id':tag['id'], 'name':tag['label'], 'unit_id':None, 'can_do':'围绕这一具体题型独立完成练习。', 'classification_reviewed':tag.get('origin')=='teacher' or bool(review and not review[0])})
     return result
 
 
@@ -65,7 +65,7 @@ def state(db, at=None):
             group = groups.setdefault(t['id'],{**t,'evidence':[],'recorded':0})
             group['recorded'] += 1
             # 来源标签/答案不是逐题核验；人工/规则核验后才可启用可信评分。
-            trusted = q.get('provenance',{}).get('teacher_reviewed') is True and t.get('classification_reviewed',True)
+            trusted = not q.get('evidence_invalidated') and q.get('provenance',{}).get('teacher_reviewed') is True and t.get('classification_reviewed',True)
             if not trusted or row['assisted'] or result.get('assisted') or result.get('assessment_source')!='source_answer' or result.get('evidence_weight',0)<=0:
                 continue
             group['evidence'].append({'identity':bank.evidence_identity(q),'attempt_id':row['id'],'stem':q['stem'],'answer':row['answer'],
@@ -144,7 +144,7 @@ def create_router(settings):
             if book_id()=='math-7-1' and not body.written and not body.choice and (not body.type_id or body.type_id in TYPE_MAP):
                 db.execute("BEGIN IMMEDIATE")
                 replenish(db)
-                pools=verified_pool(db)
+                pools=practice_pool(db)
                 options=[t for t in TYPES if pools[t['id']] and (not body.unit_id or t['unit_id']==body.unit_id) and (not body.type_id or t['id']==body.type_id)]
                 if not body.allow_challenge:
                     options=[t for t in options if any(q['difficulty']<3 for q in pools[t['id']])]

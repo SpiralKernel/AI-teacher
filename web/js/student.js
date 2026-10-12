@@ -23,6 +23,7 @@ import { createReportUI } from "./report.js";
     draft: "",
     files: [],
     answer: "",
+    partAnswers: {},
     choices: [],
     review: null,
     epoch: 0,
@@ -164,6 +165,7 @@ import { createReportUI } from "./report.js";
       files: [],
       draft: "",
       answer: "",
+      partAnswers: {},
       choices: [],
       review: null,
       aiType: "",
@@ -350,6 +352,7 @@ import { createReportUI } from "./report.js";
       work: w,
       result: null,
       answer: "",
+      partAnswers: {},
       choices: [],
       files: [],
       review: w.review?.status === "review" ? w.review : null,
@@ -362,6 +365,25 @@ import { createReportUI } from "./report.js";
   function settings() {
     const stage = stageFields(S.student.grade, S.student.term);
     const shade = el("div", { class: "dialog-shade" });
+    const updateInfo = el("p", {class:"subtle"}, "联网检查题库版本；更新会保留已有学习记录。");
+    const updateActions = el("div", {class:"actions"});
+    const updateButton = btn("检查题库更新", async () => {
+      const value = await api('/content/check');
+      updateInfo.textContent = value.message;
+      updateActions.replaceChildren();
+      if (value.available) updateActions.append(btn("下载并更新题库", async () => {
+        updateInfo.textContent = '正在下载并校验更新包…';
+        try {
+          const result = await api('/content/update', {});
+          await refresh();
+          updateInfo.textContent = result.updated ? `已更新到版本 ${result.version}，学习记录保留。` : '题库已是最新版本。';
+          updateActions.replaceChildren();
+        } catch (e) {
+          updateInfo.textContent = '更新未完成，原题库和学习记录保留。';
+          throw e;
+        }
+      }, "primary"));
+    }, "quiet");
     function close() {
       shade.remove();
       document.removeEventListener("keydown", key);
@@ -415,6 +437,8 @@ import { createReportUI } from "./report.js";
           },
           "primary full",
         ),
+        el("section", {class:"content-update"}, el("h3", {}, "题库更新"), updateInfo, updateButton, updateActions),
+        S.student.is_admin ? el("p", {}, el("a", {href:"/admin"}, "打开题库工作台 →")) : null,
       ),
     );
     root.append(shade);
@@ -523,6 +547,8 @@ import { createReportUI } from "./report.js";
       ),
       el("div", { class: "question-stem" }, q.diagram?.kind === "square_grid" ? q.stem.split("图形位置：")[0] : q.stem),
     );
+    const formats = {single_choice:"单项选择",multiple_choice:"多项选择",fill_blank:"填空",calculation:"计算",proof:"证明",application:"应用",composite:"综合解答",short_answer:"解答"};
+    if (q.annotation) node.append(el("p", {class:"tiny"}, formats[q.annotation.response_format] || "解答"));
     if (q.diagram?.kind === "square_grid") {
       const cells = q.diagram.cells;
       const size = 48;
@@ -579,6 +605,10 @@ import { createReportUI } from "./report.js";
                   : "这道题值得再看一步。",
           ),
           el("p", {}, `参考答案：${reference}`),
+          gradingPanel(r.explanation),
+          r.annotation?.parts?.length > 1 ? el("div", {class:"question-parts"}, r.annotation.parts.map((p,i)=>
+            el("details", {}, el("summary", {}, `第 ${i+1} 问参考解答`), el("p", {}, p.reference_answer || "逐问答案待核对，请结合整题解析。"),
+              el("ol", {}, (p.solution_steps || []).map(s=>el("li", {}, s)))))) : null,
           el(
             "ol",
             {},
@@ -680,15 +710,23 @@ import { createReportUI } from "./report.js";
         ),
       );
     } else {
+      const parts = q.annotation?.parts || [];
+      const multipart = parts.length > 1;
+      const fill = q.annotation?.response_format === "fill_blank";
       const input = el("textarea", {
         "aria-label": "完整解答",
         value: S.answer,
         maxLength: 12000,
-        placeholder: "写下你的推理和步骤，或拍照上传手写答案。",
+        placeholder: fill ? "按空格顺序填写答案；有单位或精度要求时一并写明。" : multipart ? "补充整题说明，或上传包含全部小问的手写答案。" : "写下你的推理和步骤，或拍照上传手写答案。",
         onInput: (e) => (S.answer = e.target.value),
       });
       node.append(
-        field("你的解答", input),
+        multipart ? el("div", {class:"question-parts"}, parts.map((p,i)=>el("section", {class:"question-part"},
+          el("h3", {}, `第 ${i+1} 问`), el("p", {class:"part-prompt"}, p.prompt), field(`第 ${i+1} 问解答`, el("textarea", {
+            "aria-label":`第 ${i+1} 问解答`, value:S.partAnswers[p.id] || "", maxLength:12000,
+            placeholder:"写下本问的答案与过程，也可以统一拍照上传。", onInput:e=>S.partAnswers[p.id]=e.target.value,
+          }))))) : null,
+        field(multipart ? "补充说明（可选）" : fill ? "填写答案" : "你的解答", input),
         photoInput("上传手写答案"),
         el(
           "p",
@@ -699,7 +737,9 @@ import { createReportUI } from "./report.js";
           S.review ? "重新评阅" : "提交 AI 评阅",
           async () => {
             const form = new FormData();
-            form.append("answer", S.answer);
+            const answer = [multipart ? parts.filter(p=>S.partAnswers[p.id]?.trim()).map(p=>`${p.id}：${S.partAnswers[p.id]}`).join("\n\n") : "", S.answer].filter(Boolean).join("\n\n");
+            if (answer.length > 12000) throw new Error("整题解答合计最多 12000 字，可以改用拍照上传。");
+            form.append("answer", answer);
             S.files.forEach((f) => form.append("files", f));
             S.review = await api(`/bank/attempts/${w.attempt_id}/assess`, form);
             render();
@@ -767,6 +807,7 @@ import { createReportUI } from "./report.js";
       { class: "review" },
       el("h3", {}, "核对 AI 评阅"),
       el("p", {}, a.reason),
+      gradingPanel(a),
       field("核对转写", transcribed),
       field("你确认的结果", verdict),
       el("label", { class: "check" }, checked, "我已核对图片转写与评价"),
@@ -788,6 +829,19 @@ import { createReportUI } from "./report.js";
         "primary",
       ),
     );
+  }
+  function gradingPanel(assessment) {
+    const d = assessment?.grading_detail;
+    if (!d) return null;
+    const verdicts = {correct:"正确",incorrect:"需要修改",partial:"部分正确",uncertain:"待确认",met:"已呈现",not_met:"需要补充"};
+    const partName = id => {const i=(S.work?.question.annotation?.parts || []).findIndex(p=>p.id===id);return i>=0?`第 ${i+1} 问`:"本问";};
+    return el("div", {class:"grading-detail"},
+      el("h3", {}, "逐问反馈"),
+      d.part_feedback.map(f=>el("article", {}, el("strong", {}, `${partName(f.part_id)} · ${verdicts[f.verdict] || "待确认"}`),
+        el("p", {}, f.reason), f.evidence_quote ? el("blockquote", {}, f.evidence_quote) : null)),
+      d.criterion_feedback.length ? el("details", {}, el("summary", {}, "查看解题过程反馈"),
+        d.criterion_feedback.map(f=>el("p", {}, `${partName(f.part_id)} · ${verdicts[f.verdict] || "待确认"}：${f.reason}`))) : null,
+      el("p", {class:"tiny"}, d.score == null ? "当前提供文字反馈，分数待核对。" : `AI 建议得分：${d.score} / ${d.full_score}，请结合转写和过程核对。`));
   }
   function progress() {
     const groups = S.home.types;

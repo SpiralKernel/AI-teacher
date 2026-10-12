@@ -93,9 +93,10 @@ def next_question(db, knowledge_id: str | None, difficulty: int | None = None, a
     if knowledge_id and knowledge_id not in NODE_MAP:
         raise HTTPException(404, "知识点不存在")
     active = db.execute("SELECT * FROM attempts WHERE student_id=? AND status='assigned'", (student_id(),)).fetchone()
+    inactive={r[0] for r in db.execute("SELECT local_id FROM content_installed_items WHERE family='original' AND active=0 AND local_id LIKE 'remote:%'")}
     if active:
         row, q = get_attempt(db, active["id"])
-        compatible = question_type_id or q.get('provenance',{}).get('family') != 'foundations'
+        compatible = q['id'] not in inactive and (question_type_id or q.get('provenance',{}).get('family') != 'foundations')
         if compatible and (knowledge_id is None or q["knowledge_id"] == knowledge_id) and (difficulty is None or q["difficulty"]==difficulty) and (not question_type_id or template_type_id(q)==question_type_id):
             result=public_question(q);result["type_id"]=template_type_id(q)
             return {"attempt_id": row["id"], "question": result, "reason": "继续完成当前练习。", "hint_used": bool(row["hint_used"])}
@@ -107,7 +108,7 @@ def next_question(db, knowledge_id: str | None, difficulty: int | None = None, a
     candidates = db.execute("""SELECT q.data FROM questions q WHERE q.knowledge_id=? ORDER BY
         (SELECT COUNT(*) FROM attempts a WHERE a.question_id=q.id AND a.student_id=?) ASC,
         q.created_at,q.id""", (knowledge_id, student_id()))
-    candidates=[json.loads(r[0]) for r in candidates]
+    candidates=[json.loads(r[0]) for r in candidates if json.loads(r[0])['id'] not in inactive]
     if not question_type_id:
         candidates=[q for q in candidates if q.get('provenance',{}).get('family')!='foundations']
     candidates=[q for q in candidates if (q["difficulty"]==selected_difficulty if selected_difficulty else q["difficulty"]<3) and (not question_type_id or template_type_id(q)==question_type_id)]

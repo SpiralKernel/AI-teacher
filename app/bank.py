@@ -21,7 +21,8 @@ STAGES = {"junior": "初中", "primary": "小学", "senior": "高中", "unknown"
 QUALITY_SNAPSHOT_FIELDS = ('quality', 'fine_type_annotations', 'derived_knowledge_tags', 'difficulty_basis',
     'grade', 'term', 'difficulty', 'difficulty_raw', 'kind', 'status', 'stem', 'options', 'answer', 'steps',
     'knowledge_tags', 'type_tags', 'derived_type_tags', 'tags_source', 'display_stem',
-    'curriculum_minimum_grade', 'curriculum_minimum_book', 'source_images', 'provenance')
+    'curriculum_minimum_grade', 'curriculum_minimum_book', 'source_images', 'provenance', 'annotation',
+    'annotation_source_question_id', 'annotation_source_sha256', 'annotation_exclusion')
 
 
 def quality_snapshot(q):
@@ -53,20 +54,33 @@ def register_tag(db, subject, stage, kind, label, origin="source"):
     return tag_id
 
 
-def import_records(db, dataset, records, manifest):
+def import_records(db, dataset, records, manifest, *, transaction=True):
     """一批一个事务；不覆盖已发布快照，反复导入不重复创建题目或标签。"""
-    db.execute("BEGIN IMMEDIATE")
+    if transaction:
+        db.execute("BEGIN IMMEDIATE")
     db.execute("INSERT INTO bank_sources VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET manifest=excluded.manifest,imported_at=excluded.imported_at", (dataset, dumps(manifest), now()))
     counts = {"read": 0, "inserted": 0, "duplicates": 0, "ready": 0, "reference": 0, "quarantine": 0}
     inserted_ids = []
     for raw in records:
         q = dict(raw)
+        if q.get('annotation'):
+            from app.question_annotation import validate_for_question
+            q['annotation'] = validate_for_question(q['annotation'], q).model_dump()
         counts["read"] += 1
         if q["subject"] not in SUBJECTS or q["stage"] not in STAGES:
             raise ValueError("不支持的科目或学段")
         if q.get('quality'):
             current = db.execute("SELECT data FROM bank_questions WHERE status!='superseded' AND (id=? OR (id>=? AND id<?)) LIMIT 1",
                                  (q['id'],q['id']+':',q['id']+';')).fetchone()
+            if current and not q.get('annotation_source_sha256'):
+                from app.question_annotation import source_fingerprint
+                saved = json.loads(current[0])
+                if saved.get('annotation_source_sha256') and source_fingerprint({**q,'id':saved['annotation_source_question_id']}) == saved['annotation_source_sha256']:
+                    for field in ('annotation','annotation_source_question_id','annotation_source_sha256','annotation_exclusion','fine_type_annotations'):
+                        q[field] = saved.get(field)
+                    q['quality']['annotation_schema_version'] = 1
+                    if saved.get('annotation_exclusion'):
+                        q['status'] = 'quarantine'
             if current and quality_snapshot(json.loads(current[0])) == quality_snapshot(q):
                 counts['duplicates'] += 1
                 continue
@@ -145,6 +159,9 @@ def public(q, reveal=False):
         result['stem'] = q['display_stem']
     if reveal:
         result.update(answer=q["answer"], steps=q["steps"])
+    if q.get('annotation'):
+        from app.question_annotation import public_annotation
+        result['annotation'] = public_annotation(q['annotation'], reveal)
     return result
 
 
@@ -286,13 +303,16 @@ def finish(db, row, q, answer, verdict, base_weight, explanation=None):
     if row["status"] != "assigned":
         raise HTTPException(409, "这道作答已完成或已切换")
     identity = evidence_identity(q)
-    repeated = any(evidence_identity(json.loads(previous[0])) == identity for previous in db.execute(
+    repeated = any(not json.loads(previous[0]).get('evidence_invalidated') and evidence_identity(json.loads(previous[0])) == identity for previous in db.execute(
         """SELECT q.data FROM bank_attempts a JOIN bank_questions q ON q.id=a.question_id
         WHERE a.student_id=current_student() AND a.status='submitted' AND json_extract(a.result,'$.evidence_weight')>0"""))
     weight = 0 if repeated or verdict not in {"correct", "incorrect"} else base_weight * (.35 if row["assisted"] and verdict == "correct" else 1)
     result = {"correct": verdict == "correct", "verdict": verdict, "answer": q["answer"], "steps": q["steps"],
               "evidence_weight": weight, "assisted": bool(row["assisted"]), "repeated": bool(repeated), "explanation": explanation,
               "assessment_source": "source_answer" if base_weight == 1 else "ai_review_confirmed"}
+    if q.get('annotation'):
+        from app.question_annotation import public_annotation
+        result['annotation'] = public_annotation(q['annotation'], reveal=True)
     db.execute("UPDATE bank_attempts SET status='submitted',answer=?,result=?,submitted_at=? WHERE id=?", (answer, dumps(result), now(), row["id"]))
     audit(db, "bank_answer", {"attempt_id": row["id"], "subject": q["subject"], "verdict": verdict, "weight": weight})
     return result
