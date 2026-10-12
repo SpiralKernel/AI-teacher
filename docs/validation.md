@@ -214,3 +214,7 @@
 设置预览：[桌面设置](previews/preview-settings-desktop.png)、[手机设置](previews/preview-settings-mobile.png)。目录职责及运行数据路径见[本地目录与维护入口](project-structure.md)。
 
 数学诊断预览：[桌面](previews/preview-math-diagnostic-desktop.png)、[手机](previews/preview-math-diagnostic-mobile.png)。本轮没有调用真实AI；手写转写和主观题评分的可靠性仍需独立样本评价。
+
+## 2026-10-12 初中物理候选
+
+新增物理来源 CSV 校验、限定公开答案 split、跨学科保护、待审题型保持禁用、原子回滚和重导入幂等测试。完整回归 310 passed、2 skipped；SQLite 副本入库验证 2,852 条全覆盖，重复贴标 unchanged 2,852、来源重导新增 0，41 项学生/数学内容摘要保持不变。来源题未被自动认证为人工已审。

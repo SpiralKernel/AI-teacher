@@ -122,3 +122,5 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 前端语法检查路径为`web/js/*.js`。浏览器脚本的截图统一写入`docs/previews/`。调整目录时同时修改`index.html`、脚本输出路径、文档链接和静态资源测试；不移动正在使用的数据库或图片目录。
 
 课程依据见[阶段要求](junior-curriculum.md)，业务流程见[架构](architecture.md)，验证和截图见[验证记录](validation.md)。
+
+物理来源适配位于 `app/physics_bank.py`，批次导出、Luna 分片生成及复核重放位于 `scripts/annotate_physics_bank.py`、`luna_physics_shard_*.py`、`reconcile_physics_annotations.py`。共用结构化标注协议和原子导入器；来源缓存、全量输出及数据库留在私有 `data/`，见[物理标注记录](physics-bank-annotation-20261012.md)。

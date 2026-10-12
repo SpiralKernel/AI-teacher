@@ -11,7 +11,7 @@ from app.db import connect, initialize, replenish
 
 def main():
     parser = argparse.ArgumentParser(description="AI-teacher 数据维护")
-    parser.add_argument("command", choices=["sync", "backup", "stats", "import-bank", "create-invites", "grant-admin", "revoke-admin", "publish-content", "import-content", "import-math-annotations"])
+    parser.add_argument("command", choices=["sync", "backup", "stats", "import-bank", "import-physics-bank", "create-invites", "grant-admin", "revoke-admin", "publish-content", "import-content", "import-math-annotations", "import-physics-annotations"])
     parser.add_argument('--annotations', type=Path, nargs='+', help='Luna 候选标注 JSONL 分片')
     parser.add_argument('--apply', action='store_true', help='通过全量检查后应用；默认只检查，不写题库')
     parser.add_argument('--username', help='授予或撤销维护权限的已有账号')
@@ -20,21 +20,32 @@ def main():
     parser.add_argument("--count", type=int, default=10, help="邀请码数量（1—100）")
     parser.add_argument("--output", type=Path, help="邀请码私密文件路径，必须尚不存在")
     parser.add_argument("--dataset", choices=["tal", "cjeval", "ceval", "cmm", "math", "all"], default="all")
-    parser.add_argument("--subject", choices=["math", "all"], default="all")
+    parser.add_argument("--subject", choices=["math", "physics", "all"], default="all")
     parser.add_argument("--math-quality", action="store_true", help="补充数学细分题型、复核并隔离异常答案")
     parser.add_argument("--source-root", type=Path)
     parser.add_argument("--stage", choices=["junior", "primary", "senior", "unknown", "all"], default="junior")
     args = parser.parse_args()
     settings = Settings()
-    if args.command not in {"backup", "import-math-annotations"}:
+    if args.command not in {"backup", "import-math-annotations", "import-physics-annotations"}:
         initialize(settings.database_path)
-    if args.command == 'import-math-annotations':
+    if args.command in {'import-math-annotations','import-physics-annotations'}:
         from app.math_annotations import iter_entries, apply_batch
         import json
         if not args.annotations:parser.error('需要 --annotations 指定标注分片')
         entries = iter_entries(args.annotations)
         with connect(settings.database_path) as db:
-            print(json.dumps(apply_batch(db,entries,dry_run=not args.apply),ensure_ascii=False,indent=2))
+            print(json.dumps(apply_batch(db,entries,dry_run=not args.apply,subject='physics' if args.command=='import-physics-annotations' else 'math'),ensure_ascii=False,indent=2))
+    elif args.command == 'import-physics-bank':
+        from app.physics_bank import manifests
+        from app.bank import import_records
+        import json
+        records,metadata=manifests(args.source_root or settings.database_path.parent/'sources')
+        # All source imports commit or roll back together; student records are untouched.
+        with connect(settings.database_path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            results={dataset:import_records(db,dataset,[q for q in records if q['provenance']['dataset']==dataset],manifest,transaction=False)
+                     for dataset,manifest in metadata.items()}
+        print(json.dumps(results,ensure_ascii=False,indent=2))
     elif args.command in {'grant-admin','revoke-admin'}:
         from app.admin import grant_admin
         if not args.username:parser.error('需要 --username 指定已有账号')

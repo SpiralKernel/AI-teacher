@@ -79,6 +79,8 @@ def import_records(db, dataset, records, manifest, *, transaction=True):
                     for field in ('annotation','annotation_source_question_id','annotation_source_sha256','annotation_exclusion','fine_type_annotations'):
                         q[field] = saved.get(field)
                     q['quality']['annotation_schema_version'] = 1
+                    if q['subject']=='physics' and 'fine_type_pending' in (saved.get('annotation') or {}).get('review',{}).get('issues',[]):
+                        q['quality']['flags']=list(dict.fromkeys([*q['quality'].get('flags',[]),'fine_type_pending']))
                     if saved.get('annotation_exclusion'):
                         q['status'] = 'quarantine'
             if current and quality_snapshot(json.loads(current[0])) == quality_snapshot(q):

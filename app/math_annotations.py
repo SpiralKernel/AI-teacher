@@ -45,8 +45,9 @@ def load_entries(paths):
     return list(iter_entries(paths))
 
 
-def apply_batch(db, entries, *, dry_run=True):
+def apply_batch(db, entries, *, dry_run=True, subject='math'):
     """Whole batch succeeds or rolls back. Existing answers/student records are immutable."""
+    if subject not in {'math','physics'}:raise ValueError('不支持的批量标注学科')
     counts = Counter(total=0); plans = defaultdict(list); seen = set()
     buffered = 0
 
@@ -63,7 +64,7 @@ def apply_batch(db, entries, *, dry_run=True):
     if not dry_run:db.execute('BEGIN IMMEDIATE')
     try:
         current = {}
-        for row in db.execute("SELECT id,source_id,json_extract(data,'$.annotation_source_question_id') original_id FROM bank_questions WHERE subject='math' AND stage='junior' AND status!='superseded'"):
+        for row in db.execute("SELECT id,source_id,json_extract(data,'$.annotation_source_question_id') original_id FROM bank_questions WHERE subject=? AND stage='junior' AND status!='superseded'",(subject,)):
             current[row['original_id'] or row['id']] = (row['source_id'], row['id'])
         for e in entries:
             counts['total'] += 1
@@ -105,13 +106,15 @@ def apply_batch(db, entries, *, dry_run=True):
                 new['issues'] = list(dict.fromkeys([*new.get('issues',[]), 'annotation_excluded']))
             # An annotation revision uses the existing immutable quality upgrade path.
             new['quality'] = {**new.get('quality',{}), 'annotation_schema_version':1}
+            if subject=='physics' and value and 'fine_type_pending' in a.review.issues:
+                new['quality']['flags']=list(dict.fromkeys([*new['quality'].get('flags',[]),'fine_type_pending']))
             plans[dataset].append(new)
             buffered += 1
             if buffered >= BATCH_SIZE:
                 flush();buffered = 0
         if not dry_run:
             flush()
-            audit(db, 'math_annotation_batch', dict(counts))
+            audit(db, subject+'_annotation_batch', dict(counts))
         return dict(counts)
     except BaseException:
         if not dry_run:db.rollback()
