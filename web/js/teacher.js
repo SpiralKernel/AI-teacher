@@ -202,7 +202,9 @@ export function createTeacherUI(ui) {
                   ? el(
                       "small",
                       {},
-                      item.response.state_update.review_unavailable
+                      item.response.boundary?.blocked
+                        ? "本轮没有更新学情，可以继续提问知识或题目。"
+                        : item.response.state_update.review_unavailable
                         ? "学情复核暂未完成，本次讲解已保存，相关学习状态暂未更新。"
                         : "部分学习判断的依据还不足，暂未记录；可以继续解释你的思路。",
                     )

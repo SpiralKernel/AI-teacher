@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT / ".env", extra="ignore", populate_by_name=True)
     ai_provider: Literal['deepseek', 'mimo'] = 'deepseek'
     auth_required: bool = True
+    diagnostic_core_enabled: bool = True
     registration_enabled: bool = True
     registration_requires_invite: bool = False
     content_source_url: str = ''

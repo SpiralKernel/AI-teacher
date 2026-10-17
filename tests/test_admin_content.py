@@ -229,7 +229,7 @@ def test_v10_migration_preserves_account_and_does_not_grant_admin(tmp_path):
     with connect(path) as db:
         assert tuple(db.execute('SELECT * FROM accounts').fetchone())==before
         assert db.execute('SELECT count(*) FROM admin_accounts').fetchone()[0]==0
-        assert db.execute('PRAGMA user_version').fetchone()[0]==11
+        assert db.execute('PRAGMA user_version').fetchone()[0]==14
 
 
 def test_correcting_bad_reference_answer_keeps_history_but_retires_unreliable_evidence(editor,tmp_path):

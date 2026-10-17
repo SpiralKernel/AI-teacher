@@ -22,6 +22,9 @@ CATALOG = {
     'angle-bisector': ('angle', ('角平分线求半角', '相邻角与角平分线', '相邻两角平分线夹角')),
 }
 
+from app.foundation_extensions import CATALOG as EXTRA_CATALOG, build as build_extra, validate as validate_extra
+CATALOG.update(EXTRA_CATALOG)
+
 # 有效网格和无效矩形网格均用整数坐标；标签仅用于标识面。
 NETS = (
     ((0,1),(1,0),(1,1),(1,2),(1,3),(2,1)),
@@ -66,7 +69,10 @@ def make_foundation(key, index):
     a, b, c = (rng.randint(2, 18) for _ in range(3))
     p = {'index': index, 'variant': variant, 'a': a, 'b': b, 'c': c}
     mode, diagram = 'numeric', None
-    if key == 'signed-quantity':
+    if key in EXTRA_CATALOG:
+        stem,answer=build_extra(key,p)
+        steps=['先按题目的符号、位置或数量条件建立关系，再按运算顺序计算。', f'按所求量代入并核对关系，得到 {answer}。']
+    elif key == 'signed-quantity':
         sign = rng.choice((-1, 1)); p['sign'] = sign
         if variant == 0:
             stem = f'规定高于基准的量记为正。某地比基准{"高" if sign>0 else "低"} {a} 米，用带符号的数表示这个相对高度（只填数值）。'
@@ -213,6 +219,8 @@ def validate_foundation(q):
     if key not in CATALOG or v not in range(3) or q['knowledge_id']!=CATALOG[key][0]:return False
     a,b,c=p['a'],p['b'],p['c']
     actual=parse_answer(q,q['answer'])
+    if key in EXTRA_CATALOG:
+        return q['stem']==build_extra(key,p)[0] and validate_extra(key,p,actual) and q['difficulty'] in (1,2) and len(q['steps'])>=2
     if key=='signed-quantity':expected=p['sign']*a
     elif key=='rational-classification':
         values=list(map(F,p['values']))

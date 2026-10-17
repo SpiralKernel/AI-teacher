@@ -21,8 +21,10 @@ class Option(BaseModel):
 
 class Draft(BaseModel):
     subject: str = 'math'
-    grade: int | None = Field(default=None, ge=7, le=9)
+    stage: Literal['junior', 'senior'] = 'junior'
+    grade: int | None = Field(default=None, ge=7, le=12)
     term: int | None = Field(default=None, ge=1, le=2)
+    curriculum_book_id: str | None = Field(default=None, max_length=100)
     stem: str = Field(default='', max_length=30000)
     kind: Literal['single_choice', 'multiple_choice', 'reference'] = 'reference'
     options: list[Option] = Field(default_factory=list, max_length=26)
@@ -88,9 +90,17 @@ def validate_publish(form, source):
         raise ValueError('已有完整标注不能通过关闭标注跳过审核')
     if form.subject not in bank.SUBJECTS:
         raise ValueError('请选择已有科目')
-    bid = f'{form.subject}-{form.grade}-{form.term}'
-    if bid not in BOOK_MAP:
-        raise ValueError('请选择已有年级、学期')
+    if form.stage == 'junior':
+        if form.grade is None or form.grade > 9 or form.term is None:
+            raise ValueError('初中题目需要选择七至九年级及学期')
+        bid = f'{form.subject}-{form.grade}-{form.term}'
+    else:
+        if form.grade is not None and form.grade < 10:
+            raise ValueError('高中题目的年级须为十至十二年级')
+        bid = form.curriculum_book_id or ''
+    if (bid not in BOOK_MAP or BOOK_MAP[bid]['subject'] != form.subject
+            or BOOK_MAP[bid].get('stage', 'junior') != form.stage):
+        raise ValueError('请选择与科目和学段匹配的教材册次')
     if not form.stem.strip() or not form.answer.strip() or not any(s.strip() for s in form.steps):
         raise ValueError('发布需要完整题干、参考答案和解析')
     for values, label in [(form.knowledge_tags, '知识点'), (form.type_tags, '具体题型')]:
@@ -98,7 +108,10 @@ def validate_publish(form, source):
             raise ValueError(f'请填写有效的{label}，每项不超过150字')
     if any(len(t.strip()) < 4 or t.strip() in {'单选题','多选题','选择题','解答题','计算题','阅读理解','single_choice','multiple_choice'} for t in form.type_tags):
         raise ValueError('题型应具体到考察方法，例如“负数的绝对值”，不能只写选择题或阅读理解')
-    if not form.curriculum_goal_ids or any(g not in GOALS or GOALS[g]['book_id'] != bid for g in form.curriculum_goal_ids):
+    if not form.curriculum_goal_ids or any(g not in GOALS or GOALS[g]['book_id'] != bid
+                                           or GOALS[g].get('stage', 'junior') != form.stage
+                                           or GOALS[g]['subject'] != form.subject
+                                           for g in form.curriculum_goal_ids):
         raise ValueError('请选择本册对应的课程目标')
     if not form.difficulty_basis.strip():
         raise ValueError('请说明难度判断依据')
@@ -203,13 +216,19 @@ def create_router(settings):
 
     @router.get('/questions')
     def questions(family: Literal['bank','original','draft']='bank', query: str=Query('', max_length=200),
-                  subject: str='', grade: int | None=Query(None, ge=7, le=9), term: int | None=Query(None, ge=1, le=2),
+                  subject: str='', stage: Literal['','junior','senior']='',
+                  grade: int | None=Query(None, ge=7, le=12), term: int | None=Query(None, ge=1, le=2),
                   status: str='', reviewed: Literal['all','pending','reviewed']='all', difficulty: int | None=Query(None, ge=1, le=3),
                   limit: int=Query(20, ge=1, le=50), offset: int=Query(0, ge=0, le=200000)):
         table = {'bank':'bank_questions', 'original':'questions', 'draft':'bank_editor_items'}[family]
         prefix = '$.form.' if family == 'draft' else '$.'
         where, args = ['1=1'], []
         if family == 'bank' and status != 'superseded':where.append("status!='superseded'")
+        if stage:
+            if family == 'original':
+                if stage != 'junior': where.append('1=0')
+            else:
+                where.append(f"json_extract(data,'{prefix}stage')=?");args.append(stage)
         for key, val in [('subject',subject),('grade',grade),('term',term),('difficulty',difficulty)]:
             if val is not None and val != '':
                 if family=='original' and key in {'subject','grade','term'}:
@@ -227,8 +246,10 @@ def create_router(settings):
             for row in db.execute('SELECT *'+sql+' ORDER BY id LIMIT ? OFFSET ?', [*args,limit,offset]):
                 q = json.loads(row['data']);q = q['form'] if family == 'draft' else q
                 items.append({'id':row['id'], 'stem':q.get('display_stem') or q['stem'], 'answer':str(q.get('answer','')),
+                              'stage':q.get('stage','junior' if family=='original' else 'unknown'),
                               'subject':q.get('subject','math'), 'grade':q.get('grade',7 if family=='original' else None),
-                              'term':q.get('term',1 if family=='original' else None), 'difficulty':q['difficulty'],
+                              'term':q.get('term',1 if family=='original' else None),
+                              'curriculum_book_id':q.get('curriculum_book_id'), 'difficulty':q['difficulty'],
                               'type_tags':q.get('type_tags',[]), 'state':row['state'] if family=='draft' else row['status'] if family=='bank' else 'verified',
                               'annotation_format':(q.get('annotation') or {}).get('response_format'),
                               'annotation_issues':(q.get('annotation') or {}).get('review',{}).get('issues',[]),
@@ -258,7 +279,8 @@ def create_router(settings):
                 from app.math_catalog import TYPE_MAP, resolve_type
                 from app.question_types import template_type_id
                 tid = resolve_type(template_type_id(source));t = TYPE_MAP.get(tid,{})
-                values.update(subject='math', grade=7, term=1, kind='reference', options=[],
+                values.update(subject='math', stage='junior', grade=7, term=1, curriculum_book_id=None,
+                              kind='reference', options=[],
                               knowledge_tags=[GOALS[t['goal_id']]['name']] if t else [], type_tags=[t['name']] if t else [],
                               curriculum_goal_ids=[t['goal_id']] if t else [], answer=str(source['answer']))
             if isinstance(values.get('difficulty_basis'),dict):values['difficulty_basis']=dumps(values['difficulty_basis'])
@@ -300,22 +322,24 @@ def create_router(settings):
                     raise HTTPException(409,'来源题已更新，请从最新版本重新建立草稿')
             qid=f'maint:{item_id}:{row["revision"]}'
             origin=source.get('provenance',{})
-            q={**form.model_dump(), 'id':qid, 'stage':'junior',
+            q={**form.model_dump(), 'id':qid,
                'status':'reference' if form.kind=='reference' else 'ready',
                'answer_mode':'written' if form.kind=='reference' else 'choice',
                'tags_source':'teacher', 'can_practice':True, 'has_missing_assets':False, 'issues':[],
                'provenance':{**origin, 'dataset':origin.get('dataset') or 'maintenance',
                    'source_id':origin.get('source_id') or row['source_id'] or item_id,
                    'teacher_reviewed':True, 'review_note':body.review_note}}
+            if origin.get('kind')=='original_rule_core':
+                q['provenance'].update(kind='teacher_edited_rule_core',parent_rule_version=origin.get('version'))
             if form.kind!='reference':q['answer']=bank.canonical_choice(form.answer,q)
             q['tags']=[]
             for kind,field in [('knowledge','knowledge_tags'),('type','type_tags')]:
                 for label in dict.fromkeys(q[field]):
-                    tid=bank.register_tag(db,q['subject'],'junior',kind,label,'teacher')
+                    tid=bank.register_tag(db,q['subject'],q['stage'],kind,label,'teacher')
                     q['tags'].append({'id':tid,'kind':kind,'label':label,'origin':'teacher'})
             db.execute('INSERT OR IGNORE INTO bank_sources VALUES(?,?,?)',('maintenance',dumps({'license':'mixed; retain per-question provenance'}),now()))
             digest=hashlib.sha256((qid+dumps(q)).encode()).hexdigest()
-            db.execute('INSERT INTO bank_questions VALUES(?,?,?,?,?,?,?,?,?,?)',(qid,'maintenance',q['subject'],'junior',q['kind'],q['status'],q['difficulty'],digest,dumps(q),now()))
+            db.execute('INSERT INTO bank_questions VALUES(?,?,?,?,?,?,?,?,?,?)',(qid,'maintenance',q['subject'],q['stage'],q['kind'],q['status'],q['difficulty'],digest,dumps(q),now()))
             db.executemany('INSERT INTO bank_question_tags VALUES(?,?)',[(qid,t['id']) for t in q['tags']])
             if row['source_kind']=='bank':supersede(db,row['source_id'],replacement=q)
             supersede(db,row['published_id'],replacement=q)

@@ -36,13 +36,15 @@ class MockAI(BaseHTTPRequestHandler):
         user=user if isinstance(user,str) else user[0]['text']
         if '模拟网络失败' in user:
             self.send_response(502);self.end_headers();return
-        if '为家长生成' in system:
+        if '为学生选择一轮加练计划' in system:
+            content={'type_id':'m7a:subtract-negative','difficulty':1,'count':3,'reason':'近期独立题有重复错误，先检查减去负数的符号。'}
+        elif '为家长生成' in system:
             value=json.loads(data['messages'][1]['content'])['learning_material'];notes=[e for e in value['evidence'] if e['id'] in value['focus_eligible_evidence_ids']]
             focus=[{'type_id':notes[-1]['type_id'],'finding':'对话与已核对练习显示，绝对值的距离含义还值得进一步检查。','evidence_ids':[notes[-1]['id']]}] if notes else []
             content={'summary':f"本期有{value['summary']['ai_questions']}次主动提问。请结合独立练习观察理解情况，提问本身不代表不会。",'strengths':[],'focus':focus,'parent_actions':['请孩子用数轴解释绝对值的含义。','先听推理，再核对答案。'],'next_steps':['独立尝试一道新的绝对值题。'],'uncertainty':'当前材料含对话和导入线索，不能替代充分的独立证据。'}
         elif '试卷识别助手' in system:
             content={'items':[{'label':'1','stem':'求-3的绝对值。','student_answer':'-3','reference_answer':'3','knowledge_ids':['absolute'],'question_type_id':'template:absolute','question_type_name':'负数的绝对值','suggested_verdict':'incorrect','confidence':'high','reason':'把距离写成了负数。','steps':['绝对值是到原点的距离。']}],'note':'已提取一道题。'}
-        elif '独立的数学学习证据复核员' in system:
+        elif '学习证据复核员' in system:
             value=json.loads(data['messages'][1]['content'])['learning_material']
             content={'decisions':[{'candidate_index':c['candidate_index'],'verdict':'supported','evidence_quote':c['evidence_quote'],'reason':'这段作答将距离写成了负数，需要纠正符号。'} for c in value['candidates']]}
         elif '学习评阅助手' in system:
@@ -81,7 +83,7 @@ def main():
             'parts':[{'id':pid,'prompt':prompt,'reference_answer':'5cm','knowledge_tags':['线段中点'],'type_tags':['线段中点关系求长度'],
                       'rubric':[{'id':'midpoint','description':'依据中点定义得到两段各等于AB的一半'}]} for pid,prompt in [('p1','求 AM，并说明依据。'),('p2','求 MB，并说明依据。')]]}
         with connect(db_path) as db:bank.import_records(db,'browser',[q,choice],{})
-        env={**os.environ,'DATABASE_PATH':str(db_path),'AUTH_REQUIRED':'true','AI_PROVIDER':'deepseek',
+        env={**os.environ,'DATABASE_PATH':str(db_path),'AUTH_REQUIRED':'true','DIAGNOSTIC_CORE_ENABLED':'false','AI_PROVIDER':'deepseek',
              'AI_API_KEY':'browser-test-only','AI_BASE_URL':f'http://127.0.0.1:{ai_port}',
              'AI_MODEL':'mock','AI_VISION_MODEL':'mock'}
         process=subprocess.Popen([str(ROOT/'.venv/bin/uvicorn'),'app.main:app','--host','127.0.0.1','--port',str(port),'--no-access-log'],cwd=ROOT,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
@@ -97,8 +99,12 @@ def main():
             errors=[]
             with sync_playwright() as p:
                 browser=p.chromium.launch(executable_path=chrome,headless=True,args=['--no-sandbox']);page=browser.new_page(viewport={'width':1440,'height':1050},accept_downloads=True)
-                page.set_default_timeout(12000);page.on('pageerror',lambda e:errors.append(str(e)));page.goto(url)
-                expect(page.get_by_role('heading',name='建立你的学习空间')).to_be_visible()
+                page.set_default_timeout(12000);page.on('pageerror',lambda e:errors.append({'message':str(e),'stack':e.stack}));page.goto(url)
+                try:expect(page.get_by_role('heading',name='建立你的学习空间')).to_be_visible()
+                except Exception:
+                    print('browser errors:',errors,flush=True)
+                    print('session:',page.request.get(url+'/api/v1/auth/session').status,flush=True)
+                    raise
                 page.screenshot(path=PREVIEWS/'preview-student-login-desktop.png',full_page=True,animations='disabled')
                 page.get_by_label('用户名',exact=True).fill('browser_student');page.get_by_label('密码',exact=True).fill('test-pass-123');page.get_by_label('称呼',exact=True).fill('小林')
                 page.get_by_role('button',name='创建并开始学习',exact=True).click()
@@ -212,12 +218,73 @@ def main():
                 page.get_by_role('button',name='学习设置',exact=True).click();page.get_by_label('年级',exact=True).select_option('8');page.get_by_role('button',name='保存学习阶段',exact=True).click()
                 expect(page.get_by_text('小林 · 8年级上册 · 数学',exact=True)).to_be_visible();expect(page.get_by_role('heading',name='先从一个问题开始。')).to_be_visible()
                 assert page.request.get(url+'/api/v1/teacher/threads').json()['items']==[]
+                # Senior books use explicit volumes instead of a guessed semester.
+                page.get_by_role('button',name='学习设置',exact=True).click()
+                page.get_by_label('学段',exact=True).select_option('senior')
+                page.get_by_label('高中教材册次',exact=True).select_option('math-senior-selective-2')
+                assert not page.get_by_label('年级',exact=True).is_visible()
+                page.screenshot(path=PREVIEWS/'preview-senior-settings-mobile.png',full_page=True,animations='disabled')
+                page.get_by_role('button',name='保存学习阶段',exact=True).click()
+                assert page.request.get(url+'/api/v1/study/home').json()['book_id']=='math-senior-selective-2'
+                assert page.request.get(url+'/api/v1/auth/session').json()['student']['stage']=='senior'
+                assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                page.get_by_role('button',name='学习设置',exact=True).click()
+                page.get_by_label('科目',exact=True).select_option('physics')
+                page.get_by_label('高中教材册次',exact=True).select_option('physics-senior-selective-3')
+                page.get_by_role('button',name='保存学习阶段',exact=True).click()
+                page.reload()
+                expect(page.get_by_role('heading',name='先从一个问题开始。')).to_be_visible()
+                assert page.request.get(url+'/api/v1/study/home').json()['book_id']=='physics-senior-selective-3'
+                assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
                 page.get_by_role('button',name='退出',exact=True).click();expect(page.get_by_role('heading',name='欢迎回来')).to_be_visible()
                 page.get_by_role('button',name='新建学生',exact=True).click();page.get_by_label('用户名',exact=True).fill('second_student');page.get_by_label('密码',exact=True).fill('test-pass-123');page.get_by_role('button',name='创建并开始学习',exact=True).click()
                 expect(page.get_by_role('heading',name='先从一个问题开始。')).to_be_visible();assert page.request.get(url+'/api/v1/study/home').json()['completed']==0
                 assert page.request.get(url+'/api/v1/teacher/threads').json()['items']==[]
+                # Isolated new account: diagnosis first, then a bounded AI plan after real errors.
+                page.route('**/api/v1/study/training-plans',lambda route:route.continue_(post_data=json.dumps({'type_id':'m7a:subtract-negative'})) if route.request.method=='POST' else route.continue_())
+                page.get_by_role('button',name='安排下一轮',exact=True).click()
+                expect(page.get_by_role('heading',name='独立诊断 / 复习',exact=True)).to_be_visible()
+                page.get_by_role('button',name='开始 3 道独立新题',exact=True).click()
+                for i in range(3):
+                    expect(page.locator('.training-phase')).to_contain_text('独立新题')
+                    current=page.request.post(url+'/api/v1/study/training-plans/'+page.request.get(url+'/api/v1/study/training-plans').json()['plan']['id']+'/next',data={}).json()['work']
+                    with connect(db_path) as db:stored=json.loads(db.execute('SELECT data FROM questions WHERE id=?',(current['question']['id'],)).fetchone()[0])
+                    page.get_by_label('你的答案',exact=True).fill(stored['answer'])
+                    page.get_by_role('button',name='提交答案',exact=True).click()
+                    expect(page.get_by_role('heading',name='这道题答对了。')).to_be_visible()
+                    page.get_by_role('button',name='查看本轮结果' if i==2 else '继续本轮',exact=True).click()
+                expect(page.locator('#work')).to_have_count(0)
+                expect(page.locator('.training-card')).to_contain_text('本轮已完成')
+                for _ in range(5):
+                    work=page.request.post(url+'/api/v1/study/next',data={'type_id':'m7a:subtract-negative'}).json()
+                    assert page.request.post(url+f"/api/v1/attempts/{work['attempt_id']}/answer",data={'answer':'999999'}).status==200
+                page.reload()
+                page.get_by_role('button',name='安排下一轮',exact=True).click()
+                expect(page.get_by_role('heading',name='针对加练与独立复测',exact=True)).to_be_visible()
+                page.get_by_role('button',name='开始 3 道加练 + 2 道复测',exact=True).click()
+                pid=page.request.get(url+'/api/v1/study/training-plans').json()['plan']['id']
+                for i in range(5):
+                    expect(page.locator('.training-phase')).to_contain_text('加练：' if i<3 else '独立新题：')
+                    current=page.request.post(url+f'/api/v1/study/training-plans/{pid}/next',data={}).json()['work']
+                    if i==1:
+                        page.reload()
+                        page.get_by_role('button',name='恢复本轮练习',exact=True).click()
+                        assert page.request.post(url+f'/api/v1/study/training-plans/{pid}/next',data={}).json()['work']['attempt_id']==current['attempt_id']
+                    with connect(db_path) as db:stored=json.loads(db.execute('SELECT data FROM questions WHERE id=?',(current['question']['id'],)).fetchone()[0])
+                    page.get_by_label('你的答案',exact=True).fill(stored['answer'])
+                    page.get_by_role('button',name='提交答案',exact=True).click()
+                    expect(page.get_by_role('heading',name='这道题答对了。')).to_be_visible()
+                    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                    if i==0:page.screenshot(path=PREVIEWS/'preview-training-mobile.png',full_page=True,animations='disabled')
+                    if i==3:page.screenshot(path=PREVIEWS/'preview-training-retest-mobile.png',full_page=True,animations='disabled')
+                    page.get_by_role('button',name='查看本轮结果' if i==4 else '继续本轮',exact=True).click()
+                expect(page.locator('#work')).to_have_count(0)
+                expect(page.locator('.training-card')).to_contain_text('本轮已完成')
+                expect(page.locator('.training-card')).to_contain_text('2 题计入有效独立证据')
+                page.set_viewport_size({'width':1440,'height':1050})
+                page.screenshot(path=PREVIEWS/'preview-training-result-desktop.png',full_page=True,animations='disabled')
                 assert not errors,errors;browser.close()
-            print('当前界面验收通过：零题答疑、拍照问题、自动学习线索、即时问答保留草稿、识图导入核对、AI学情/PDF导出、记忆到期复测提示、阶段及账号隔离、390px布局。')
+            print('当前界面验收通过：零题答疑、拍照问题、自动学习线索、即时问答保留草稿、识图导入核对、AI学情/PDF导出、记忆到期复测提示、阶段及账号隔离、3题独立诊断、AI计划3题加练+2题复测、刷新恢复、390px布局。')
         finally:process.terminate();process.wait(timeout=10);server.shutdown();server.server_close()
 
 

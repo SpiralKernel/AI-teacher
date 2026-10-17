@@ -66,6 +66,32 @@ def test_time_decay_expires_claim_but_keeps_source(kind,ttl):
     assert middle['freshness']=='aging' and middle['memory_confidence']=='low'
 
 
+def test_recent_errors_have_more_weight_than_old_successes():
+    values = [event(1, -60), event(2, -60), event(3, 0, False), event(4, 0, False)]
+    result = memory.practice_summary(values, BASE)
+    assert result['weighted_error_rate'] == .8  # old success weighs 1/4 each
+    assert result['effective_count'] == 2.5 and result['recent_independent_count'] == 2
+    assert memory.practice_summary(values, BASE.replace(hour=15)) == result
+
+
+def test_time_weighting_still_rejects_duplicate_and_future_evidence():
+    values = [event(1, -30, identity='same'), event(2, 0, identity='same'), event(3, 1)]
+    result = memory.practice_summary(values, BASE)
+    assert result['sample_count'] == 1 and result['effective_count'] == .5
+
+
+def test_eight_attempts_do_not_override_a_history_of_repeated_errors(setup):
+    client, settings = setup
+    for _ in range(5):
+        answer(client, settings, wrong=True)
+    for _ in range(3):
+        answer(client, settings)
+    value = get_type(client)
+    assert value['independent_count'] == 8
+    assert value['evidence_summary']['weighted_error_rate'] == .625
+    assert value['status'] == '需要补强'
+
+
 def test_only_duplicate_claims_supersede_not_different_errors_or_interest():
     notes=[note('first'),note('duplicate',days=1),note('different',days=2,quote='|-5|=0'),
            note('interest','question_interest',3,quote='绝对值是什么？')]

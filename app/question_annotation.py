@@ -50,8 +50,9 @@ class Difficulty(StrictModel):
 
 
 class Curriculum(StrictModel):
-    grade: int | None = Field(default=None, ge=7, le=9)
+    grade: int | None = Field(default=None, ge=7, le=12)
     term: int | None = Field(default=None, ge=1, le=2)
+    book_id: str | None = Field(default=None, max_length=100)
     goal_ids: list[str] = Field(default_factory=list, max_length=20)
     scope_status: Literal['source', 'candidate', 'unknown', 'reviewed'] = 'unknown'
     basis: str = Field(default='', max_length=2000)
@@ -144,6 +145,34 @@ def validate_for_question(value, q, published=False):
             raise ValueError('选择题的作答形式与原题不符')
     elif a.response_format in {'single_choice','multiple_choice'}:
         raise ValueError('过程题不能仅靠标注改成选择题')
+    stage = q.get('stage')
+    grades = [grade for grade in (q.get('grade'), a.curriculum.grade) if grade is not None]
+    if stage == 'junior' and any(not 7 <= grade <= 9 for grade in grades):
+        raise ValueError('初中题目与结构化标注的年级必须在七至九年级')
+    if stage == 'senior' and any(not 10 <= grade <= 12 for grade in grades):
+        raise ValueError('高中题目与结构化标注的年级必须在十至十二年级')
+    if q.get('curriculum_book_id') and a.curriculum.book_id != q['curriculum_book_id']:
+        raise ValueError('结构化标注与题目主适用册次不一致')
+    if a.curriculum.book_id:
+        from app.course_catalog import BOOK_MAP
+        book = BOOK_MAP.get(a.curriculum.book_id)
+        if not book or book['subject'] != q.get('subject') or book.get('stage') != stage:
+            raise ValueError('课程册次与题目科目或学段不一致')
+    if a.curriculum.goal_ids:
+        from app.course_catalog import GOALS
+        if stage == 'senior' and not a.curriculum.book_id:
+            raise ValueError('高中课程目标需要指定主适用册次')
+        bid = a.curriculum.book_id or q.get('curriculum_book_id')
+        if not bid and stage == 'junior' and q.get('grade') is not None and q.get('term') is not None:
+            bid = f"{q.get('subject')}-{q['grade']}-{q['term']}"
+        for goal_id in a.curriculum.goal_ids:
+            target = GOALS.get(goal_id)
+            if (not target or target['subject'] != q.get('subject')
+                    or target.get('stage', 'junior') != stage
+                    or (bid and target['book_id'] != bid)):
+                raise ValueError('课程目标与题目科目、学段或主适用册次不一致')
+    if 'curriculum_goal_ids' in q and set(a.curriculum.goal_ids) != set(q.get('curriculum_goal_ids') or []):
+        raise ValueError('结构化标注与题目课程目标不一致')
     if published:
         if a.review.status != 'reviewed' or a.review.method != 'teacher':
             raise ValueError('发布结构化标注前须人工核对并标为已审核')

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from app import ai_policy, bank, bank_ai, memory
 from app.course_catalog import BOOK_MAP
 from app.db import connect, dumps, now
-from app.identity import book_id, scope
+from app.identity import book_id, scope, subject_id
 from app.math_catalog import resolve_type
 from app.question_types import template_type_id
 from app.study import state
@@ -85,7 +85,7 @@ def snapshot(db, period):
     where,args=bank.clauses(bank.Selection(), include_history=True)
     for row in db.execute("SELECT a.*,q.data,q.content_hash FROM bank_attempts a JOIN bank_questions q ON q.id=a.question_id WHERE a.student_id=current_student() AND a.status='submitted' AND "+where+" ORDER BY a.submitted_at,a.id",args):
         q,r=json.loads(row['data']),json.loads(row['result']);identity=bank.evidence_identity(q)
-        independent=not q.get('evidence_invalidated') and q.get('provenance',{}).get('teacher_reviewed') is True and not row['assisted'] and r.get('assessment_source')=='source_answer' and r.get('evidence_weight',0)>0 and identity not in seen
+        independent=bank.trusted(q) and not row['assisted'] and r.get('assessment_source')=='source_answer' and r.get('evidence_weight',0)>0 and identity not in seen
         if not q.get('evidence_invalidated'):seen.add(identity)
         from app.study import question_types
         types=question_types(db,q)
@@ -123,9 +123,9 @@ def snapshot(db, period):
           'strengths':[f"“{t['name']}”最近独立作答表现稳定。" for t in value['types'] if t['current_status']=='表现稳定'][:3],
           'focus':[],'parent_actions':['请孩子讲一讲解题理由，先听思路，再看答案。','区分独立完成与提示后完成，鼓励主动提问。'],'next_steps':next_steps,
           'uncertainty':'对话与导入题属于学习线索；独立题量少、未核验来源答案及未练习题型不能据此断言掌握。'}
-    data={'period':period,'period_label':{'week':'最近7天','month':'最近30天','all':'累计记录'}[period],'book_id':book_id(),'student':{'nickname':(scope() or {}).get('nickname','学习者'),'grade':book['grade'],'term':book['term']},
+    data={'period':period,'period_label':{'week':'最近7天','month':'最近30天','all':'累计记录'}[period],'book_id':book_id(),'stage':book.get('stage','junior'),'book_title':book.get('title'),'subject':subject_id(),'subject_name':bank.SUBJECTS[subject_id()],'student':{'nickname':(scope() or {}).get('nickname','学习者'),'grade':book['grade'],'term':book['term']},
           'summary':{'attempts':len(records),'independent':sum(r['independent'] for r in records),'assisted':sum(r['assisted'] for r in records),'questions':chats,'imported':imported,'observations':len(notes),'stable_types':sum(t['current_status']=='表现稳定' for t in value['types']),'covered_types':len(known),'review_due_types':len(review_queue)},
-          'chapters':chapters,'review_queue':review_queue,'trend':sorted(daily.values(),key=lambda r:r['day'])[-30:],'types':[{k:t.get(k) for k in ('id','name','unit_id','status','current_status','learning_status','independent_count','observation_count','learning_notes','reason','review')} for t in known],
+          'chapters':chapters,'review_queue':review_queue,'trend':sorted(daily.values(),key=lambda r:r['day'])[-30:],'types':[{k:t.get(k) for k in ('id','name','unit_id','status','current_status','learning_status','independent_count','observation_count','learning_notes','reason','review','evidence_summary')} for t in known],
           'evidence':records[-50:]+[{'id':'note:'+n['id'],'type_id':n['type_id'],'quote':n['evidence_quote'],'note':n['note'],'kind':n['kind'],'source':n['source'],
             'policy_version':n.get('policy_version'),'validation':n.get('validation',{}),
             'memory_status':n['memory_status'],'message_id':n.get('message_id'),'created_at':n['created_at'],'resolved_by':n['resolved_by']} for n in notes[-30:]],'rule_analysis':rule,

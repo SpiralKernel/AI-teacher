@@ -13,7 +13,7 @@ from app.curriculum import NODES, UNITS, VERSION
 from app.db import audit, connect, dumps, initialize, now
 from app.learning import get_attempt, history, next_question, profile, recommend, submit
 from app.tutor import respond
-from app import materials
+from app import ai_policy, materials
 from app.question_types import template_type_id
 from app.bank_api import create_router
 from app.course_api import create_router as create_course_router
@@ -42,7 +42,7 @@ def create_app(settings: Settings | None = None):
 
     @asynccontextmanager
     async def lifespan(app):
-        initialize(settings.database_path)
+        initialize(settings.database_path, with_diagnostic_core=settings.diagnostic_core_enabled)
         with connect(settings.database_path) as db:
             db.execute("UPDATE imports SET status='failed',error='服务重启中断了识别，请重试。' WHERE status='processing'")
             for row in db.execute("SELECT attempt_id,data FROM bank_reviews WHERE json_extract(data,'$.status')='processing'").fetchall():
@@ -51,11 +51,13 @@ def create_app(settings: Settings | None = None):
                 db.execute("UPDATE bank_reviews SET data=? WHERE attempt_id=?",(dumps(value),row["attempt_id"]))
         yield
 
-    app = FastAPI(title="AI-teacher · 初中全科学习", version="0.6.0", lifespan=lifespan)
+    app = FastAPI(title="AI-teacher · 中学数理学习", version="0.7.0", lifespan=lifespan)
     app.state.settings = settings
     app.include_router(auth.create_router(settings))
     from app.study import create_router as study_router
     app.include_router(study_router(settings))
+    from app.training import create_router as training_router
+    app.include_router(training_router(settings))
     from app.teacher import create_router as teacher_router
     from app.reports import create_router as reports_router
     app.include_router(teacher_router(settings))
@@ -284,7 +286,7 @@ def create_app(settings: Settings | None = None):
                 previous = list(db.execute("SELECT user_message,response FROM tutor_messages WHERE attempt_id=? ORDER BY id", (attempt_id,)))
                 if len(previous) >= 12:
                     raise HTTPException(429, "这道题已讨论 12 轮，建议休息一下或开始下一题")
-                if row["status"] == "assigned":
+                if row["status"] == "assigned" and not ai_policy.boundary_reason(body.message):
                     db.execute("UPDATE attempts SET hint_used=1 WHERE id=?", (attempt_id,))
                 student_profile=profile(db)
                 state = next(n for n in student_profile["knowledge"] if n["id"] == q["knowledge_id"])

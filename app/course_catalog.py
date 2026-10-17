@@ -7,7 +7,7 @@
 import json
 from pathlib import Path
 
-VERSION = "junior-2026.10.3"
+VERSION = "curriculum-2026.10.16.1"
 MOE = "https://www.moe.gov.cn/srcsite/A26/s8001/202204/"
 PEP = "https://jc.pep.com.cn/"
 STANDARD_FILES = {
@@ -216,26 +216,20 @@ def rows_book(subject, grade, term, rows, pep_id=None):
                               for name, aliases, can, check, practical in rows], pep_id)
 
 
-rows_book("physics", 8, 1, [
-    ("测量与机械运动", "长度测量|时间测量|机械运动|速度|参照物", "规范测量，选择参照物并用速度描述运动。", "记录单位与估读，结合路程时间图象解释运动。", True),
-    ("声音与物态变化", "声现象|声音的特性|物态变化|熔化|沸腾|汽化", "解释发声传播及物态变化的吸放热关系。", "区分音调响度音色，读温度时间图象而非只背结论。", False),
-    ("光与成像", "光的直线传播|光的反射|光的折射|凸透镜|平面镜", "用光路解释反射折射与成像，联系透镜应用。", "规范画光线，区别实像虚像及像的位置大小。", True),
-    ("质量与密度", "质量|密度|天平|量筒", "测量质量体积，运用密度判断材料及求未知量。", "解释密度的物理意义，量程、单位和误差分析合理。", True),
-], "1341001201241")
-rows_book("physics", 8, 2, [
-    ("力与运动", "力|弹力|重力|摩擦力|牛顿第一定律|二力平衡|惯性", "分析受力与运动状态，区分平衡力和相互作用力。", "先确定研究对象，画受力图并说明惯性不是力。", False),
-    ("压强与浮力", "压强|液体压强|大气压|浮力|阿基米德原理|物体浮沉", "结合受力与密度解释压强和浮沉问题。", "检查受力面积、排开体积及液体密度的适用条件。", False),
-    ("功、能与机械", "机械功|功率|机械能|杠杆|滑轮|机械效率", "分析做功条件与能量转化，比较机械的省力和效率。", "明确力与位移方向，区分功率、效率和功。", True),
-], "1341001202241")
-rows_book("physics", 9, 1, [
-    ("内能与热机", "内能|比热容|热量|热机|热效率", "用分子运动和能量转化解释热现象，进行简单热量计算。", "区分温度、热量与内能，说明模型前提。", False),
-    ("电路与欧姆定律", "电路|电流|电压|电阻|欧姆定律|串联|并联", "连接和分析基本电路，利用欧姆定律解决问题。", "画对应电路，检查电表接法与电阻条件。", True),
-    ("电功率与安全用电", "电功|电功率|焦耳定律|电能表|安全用电", "分析电能转化，区分额定与实际功率。", "按实际电压电阻计算，说明家庭用电的基本安全原则。", False),
-], "1341001303251")
-rows_book("physics", 9, 2, [
-    ("电与磁", "磁场|电磁铁|电动机|发电机|电磁感应", "解释电磁现象和电机的能量转化，分析影响因素。", "区分电流的磁效应、受力运动与电磁感应。", True),
-    ("信息、能源与综合探究", "电磁波|能源|能量守恒|实验探究|控制变量", "联系能源与信息技术，设计变量清晰的探究。", "由数据支持结论，区分实验事实、推理和误差。", True),
-], "1341001303251")
+# Checked physics chapter order lives with the data, away from other subjects.
+PHYSICS_CURRICULUM = json.loads((Path(__file__).parent / "data/physics_curriculum.json").read_text())
+for bid, rows in PHYSICS_CURRICULUM.items():
+    subject, grade, term = bid.split('-')
+    rows_book(subject, int(grade), int(term), rows)
+PHYSICS_TEXTBOOK_REVIEWS = json.loads((Path(__file__).parent / "data/physics_textbook_reviews.json").read_text())
+for current in BOOKS:
+    if current['subject']!='physics':
+        continue
+    review=next(r for r in PHYSICS_TEXTBOOK_REVIEWS if r['grade']==current['grade'] and (r['term']==current['term'] or r['term']==0))
+    current.update(basis='pep_toc_verified',edition='人教版 · 用户提供物理PDF目录已核对',textbook_review=review,
+        scope_note='章节目录已核对；学习目标由项目编写。九年级全一册分前后两段是项目建议，不是官方学期边界。',
+        title=f"物理{current['grade']}年级"+('全一册 · '+('前半进度' if current['term']==1 else '后半进度') if current['grade']==9 else ('上册' if current['term']==1 else '下册')))
+    current['sources'].append({'title':review['filename'],'sha256':review['sha256'],'role':'toc','url':None})
 rows_book("chemistry", 9, 1, [
     ("化学实验入门", "实验基本操作|化学变化|物理变化|化学性质", "区分变化与性质，规范观察记录并遵守实验安全。", "判断是否生成新物质，说明操作的目的和风险。", True),
     ("空气、氧气与水", "空气|氧气|二氧化碳|水的净化|水的组成|气体制取", "说明常见气体与水的组成、性质、检验与制备思路。", "装置选择、检验和收集方法有性质依据，实验操作需现场核查。", True),
@@ -375,6 +369,41 @@ for review in TEXTBOOK_REVIEWS:
                                    "role": "toc", "sha256": review["sha256"], "url": None})
     else:
         current["scope_note"] += " 已收到另一章节安排的九下PDF（含反比例函数），作为版本参考保存，当前学习范围尚未切换。"
+
+# Senior textbook scopes are selected as whole books. Their sequencing varies by
+# school, so grade and term remain unset until a school supplies that mapping.
+SENIOR_OUTCOMES = {
+    "math": ["用函数、几何、统计与概率模型描述关系并解决问题。", "说明运算和推理依据，检查结论是否满足定义、条件与情境。"],
+    "physics": ["用物理量、模型和规律解释运动、相互作用、能量及物质现象。", "使用数学表示、实验数据和证据分析问题，并说明模型条件与结论边界。"],
+}
+SENIOR_CATALOG = json.loads((Path(__file__).parent / "data/senior_curriculum.json").read_text())
+for source_book in SENIOR_CATALOG["books"]:
+    bid = source_book["book_id"]
+    book = {
+        "id": bid, "book_id": bid, "subject": source_book["subject"],
+        "grade": source_book["grade"], "term": source_book["term"], "stage": "senior",
+        "edition": source_book["edition"], "basis": source_book["basis"],
+        "title": source_book["title"], "book_type": source_book["book_type"],
+        "scope_note": source_book["scope_note"], "source_sha256": source_book["source_sha256"],
+        "pages": source_book["pages"],
+        "sources": [{key: value for key, value in source.items() if key != "path"}
+                    for source in source_book["sources"]],
+        "stage_outcomes": SENIOR_OUTCOMES[source_book["subject"]], "units": [],
+    }
+    for source_unit in source_book["units"]:
+        unit_item = {"id": source_unit["id"], "name": source_unit["name"],
+                     "order": source_unit["order"], "goals": []}
+        for source_goal in source_unit["goals"]:
+            unit_item["goals"].append({
+                "id": source_goal["id"], "unit_id": source_unit["id"], "book_id": bid,
+                "subject": source_book["subject"], "stage": "senior",
+                "name": source_goal["name"], "aliases": source_goal["aliases"],
+                "can_do": source_goal["can_do"], "checks": source_goal["checks"],
+                "prerequisites": source_goal["prerequisites"], "practical": source_goal["practical"],
+                "required": source_goal["required"], "legacy_ids": [],
+            })
+        book["units"].append(unit_item)
+    BOOKS.append(book)
 
 BOOK_MAP = {b["id"]: b for b in BOOKS}
 UNITS = {u["id"]: u for b in BOOKS for u in b["units"]}

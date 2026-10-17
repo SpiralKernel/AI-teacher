@@ -10,7 +10,7 @@ from typing import Literal
 
 from app.course_catalog import BOOK_MAP, GOALS
 from app.db import dumps, now
-from app.identity import book_id
+from app.identity import book_id, subject_id, stage_id
 from app.math_catalog import TYPE_MAP, resolve_type
 from app.question_types import COARSE_NAMES, normalize_name, register_ai_type
 
@@ -29,11 +29,19 @@ class Observation(BaseModel):
 
 def register_type(db, type_id, name, definition='', knowledge_ids=(), source_id='teacher'):
     bid=book_id();book=BOOK_MAP[bid]
+    if stage_id() == 'senior':
+        if not name.strip() or normalize_name(name) in COARSE_NAMES:
+            return None
+        from app.scoped_types import register
+        return register(db, type_id, name, definition)
     if bid=='math-7-1':
         canonical=resolve_type(type_id,name)
         if canonical:
             return canonical
-    row=db.execute("SELECT id FROM question_types WHERE subject='math' AND grade=? AND term=? AND (id=? OR normalized_name=?)",(book['grade'],book['term'],type_id,normalize_name(name))).fetchone()
+    from app.diagnostic_core import types_for_book
+    core=next((t for t in types_for_book(bid) if t['id']==type_id or normalize_name(t['name'])==normalize_name(name)),None)
+    if core:return core['id']
+    row=db.execute("SELECT id FROM question_types WHERE subject=? AND grade=? AND term=? AND (id=? OR normalized_name=?)",(subject_id(),book['grade'],book['term'],type_id,normalize_name(name))).fetchone()
     if row:
         return row[0]
     # 显式指向其他阶段的类型不自动改名归入当前册次。
@@ -46,13 +54,15 @@ def register_type(db, type_id, name, definition='', knowledge_ids=(), source_id=
         return register_ai_type(db,value,source_id)
     normalized=normalize_name(name)
     tid='ai:'+hashlib.sha256((bid+':'+normalized).encode()).hexdigest()[:20]
-    data={'id':tid,'name':name,'description':definition,'subject':'math','grade':book['grade'],'term':book['term'],'knowledge_ids':[], 'source':'ai','needs_review':True}
-    db.execute("INSERT OR IGNORE INTO question_types VALUES(?,'math',?,?,?,?)",(tid,book['grade'],book['term'],normalized,dumps(data)))
+    data={'id':tid,'name':name,'description':definition,'subject':subject_id(),'grade':book['grade'],'term':book['term'],'knowledge_ids':[], 'source':'ai','needs_review':True}
+    db.execute("INSERT OR IGNORE INTO question_types VALUES(?,?,?,?,?,?)",(tid,subject_id(),book['grade'],book['term'],normalized,dumps(data)))
     return tid
 
 
 def save(db, proposals, message_id, student_text, source='conversation', validation=None):
-    from app.ai_policy import VERSION
+    from app.ai_policy import VERSION, boundary_reason
+    if boundary_reason(student_text):
+        return []
     if source == 'conversation' and validation is None:
         return []
     saved=[];seen=set()
@@ -63,7 +73,12 @@ def save(db, proposals, message_id, student_text, source='conversation', validat
         canonical=resolve_type(proposal.type_id,proposal.type_name) if book_id()=='math-7-1' else None
         if proposal.goal_id and (proposal.goal_id not in GOALS or GOALS[proposal.goal_id]['book_id']!=book_id()):
             continue
-        if not canonical and not proposal.goal_id and not db.execute('SELECT 1 FROM question_types WHERE id=?',(proposal.type_id,)).fetchone():
+        known = (db.execute('SELECT 1 FROM scoped_question_types WHERE id=? AND book_id=?', (proposal.type_id,book_id())).fetchone()
+                 if stage_id()=='senior' else db.execute('SELECT 1 FROM question_types WHERE id=?',(proposal.type_id,)).fetchone())
+        if stage_id()=='senior' and not known:
+            from app.senior_bank import types_for_book as senior_types
+            known = any(t['id']==proposal.type_id for t in senior_types(db,book_id()))
+        if not canonical and not proposal.goal_id and not known:
             continue
         tid=register_type(db,proposal.type_id,proposal.type_name,proposal.definition,source_id=message_id or source)
         if not tid or (tid,proposal.kind) in seen:

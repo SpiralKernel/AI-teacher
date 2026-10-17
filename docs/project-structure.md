@@ -53,6 +53,7 @@ AI-teacher/
 | 题库工作台、管理员、题干/答案/标签审核与版本 | `app/admin.py`、`web/admin.html`、`web/js/admin.js`、`web/css/admin.css` | `tests/test_admin_content.py`、`scripts/browser_admin.py` |
 | 冻结题库版本、下载清单、联网校验与原子安装 | `app/content.py`、`app/manage.py` | `tests/test_admin_content.py` |
 | 题库与可靠题型证据、复测 | `app/study.py`、`web/js/student.js`、`web/css/student.css` | `tests/test_student.py`、`scripts/browser_student.py` |
+| AI受限训练计划、辅助加练与独立新题复测 | `app/training.py`、`app/learning.py`、`app/bank.py` | `tests/test_training.py`、`scripts/browser_student.py` |
 | 自由答疑与可纠正的学习线索 | `app/teacher.py`、`app/observations.py`、`web/js/teacher.js` | `tests/test_teacher_reports.py` |
 | 学生记忆生命周期、衰减、相关检索和复测调度 | `app/memory.py`、`app/study.py`、`app/reports.py` | `tests/test_memory.py`、`scripts/eval_memory.py` |
 | AI教学规则、引用约束与独立复核 | `app/ai_policy.py`、`app/observation_guard.py` | `tests/test_ai_guard.py`、`scripts/eval_teaching.py` |
@@ -124,3 +125,37 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8010
 课程依据见[阶段要求](junior-curriculum.md)，业务流程见[架构](architecture.md)，验证和截图见[验证记录](validation.md)。
 
 物理来源适配位于 `app/physics_bank.py`，批次导出、Luna 分片生成及复核重放位于 `scripts/annotate_physics_bank.py`、`luna_physics_shard_*.py`、`reconcile_physics_annotations.py`。共用结构化标注协议和原子导入器；来源缓存、全量输出及数据库留在私有 `data/`，见[物理标注记录](physics-bank-annotation-20261012.md)。
+
+物理逐题初审/复核/裁定协议及断点校验位于 `app/physics_full_review.py`；`scripts/check_physics_full_review.py`只读验证内容并可保存剩余题号。`app/physics_full_import.py`负责完整双轮审核的原子入库、隔离、证据失效及已有草稿改绑，通过`app.manage import-physics-full-review --review-dir … [--apply]`执行。结果与私有证据索引见[全量审核结果](physics-full-review-20261014.md)。
+
+`app/physics_review.py` 与 `scripts/curate_physics_review_20261014.py` 负责首批精审裁定、来源双哈希检查和后台候选草稿入库；不会自动发布或认证人工已审。原始复核和最终裁定保存在 `app/data/physics_audit_*`、`physics_review_adjudicated_*`；私有完整台账留在 `data/annotations/physics-audit-20261014/`。
+
+数学/物理当前学习入口使用 `identity.py` 的科目与册次。`diagnostic_core.py` 管理32类规则核心，`foundation_extensions.py` 补七上基础题；`curated_bank.py` 加载精选网络候选。物理课程目标与教材核对信息分别保存在 `app/data/physics_curriculum.json`、`physics_textbook_reviews.json`。维护与证据边界见[本轮说明](math-physics-core-20261015.md)。
+
+高中数理维护集中在以下入口，详见[高中题库](senior-bank.md)：
+
+| 路径 | 职责 |
+| --- | --- |
+| `app/data/senior_curriculum.json` | 10册教材、50单元、100条阶段目标 |
+| `app/data/senior_math_luna.json`、`senior_physics_luna.json` | 累计主审台账，含来源快照、完整题目标注和隔离结论 |
+| `app/data/senior_peer_review.json` | 独立复核，绑定来源及规范化标注哈希 |
+| `app/data/senior_source_manifests.json` | 固定网络数据版本、文件校验值 |
+| `app/data/senior_release.json` | 已验收组合的哈希清单；含基础题时为schema2、10文件 |
+| `app/senior_bank.py` | 入库校验、不可变版本、启动增量加载；不冒充教师审核 |
+| `app/scoped_types.py` | 高中按学生当前教材册次登记细题型 |
+| `scripts/fetch_senior_sources.py` | 下载固定来源或只读校验缓存 |
+| `scripts/audit_senior_bank.py` | 实际去重题与双轮审核的章节覆盖门槛 |
+| `scripts/release_senior_bank.py` | 复核通过后冻结本地发布清单 |
+| `scripts/browser_senior.py` | 实际高中题的10册手机流程、全题干公式检查；临时数据库、模拟AI |
+| `app/data/senior_*_foundations.json` | 增补基础题主审台账，明确原创来源 |
+| `app/data/senior_*_foundation_skills.json` | 基础细技能、要求、课程目标和具体题号 |
+| `app/data/senior_foundations_peer_review.json` | 新增基础题的独立复算结论及双哈希绑定 |
+| `app/senior_foundations.py` | 技能/题目双向关联、全目标门槛及重复内容校验 |
+| `scripts/export_senior_foundations.py` | 从已完成复核的矩阵导出 `docs/senior-foundations.md` |
+| `scripts/install_senior_release.py` | 副本验证、保留旧内容和学生记录、备份后本地安装 |
+| `data/sources/textbooks/senior-private/` | 私有教材PDF原件，不提交Git |
+| `data/annotations/senior-20261015/` | 私有覆盖、浏览器、迁移证据与中间审阅台账 |
+
+`senior_math_*`、`senior_physics_*`脚本及分批JSON用于来源整理和审计重放。学生运行时只读取上述累计主审与发布清单；不要用旧中间批次覆盖累计台账。高中用独立册次表，保留初中年级/学期与已有记录。
+
+AI职责与边界规则见 [AI职责、学情写入与教学边界](ai-learning-contract.md)，时间权重见 [学生记忆与复测](student-memory.md)。

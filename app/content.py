@@ -87,11 +87,13 @@ def publish_release(db):
         pid = str(uuid.uuid4());db.execute("INSERT INTO content_meta VALUES('publisher_id',?)",(pid,))
     else:pid = pid[0]
     items = []
-    for row in db.execute("SELECT data FROM bank_questions WHERE status IN ('ready','reference') AND json_extract(data,'$.can_practice')=1 AND json_extract(data,'$.provenance.teacher_reviewed')=1 ORDER BY id"):
+    for row in db.execute("SELECT data FROM bank_questions WHERE status IN ('ready','reference') AND json_extract(data,'$.can_practice')=1 AND (json_extract(data,'$.provenance.teacher_reviewed')=1 OR json_extract(data,'$.provenance.kind')='original_rule_core') ORDER BY id"):
         q = json.loads(row[0])
         # 仅分发后台人工核对且有明确册次/目标的题；旧来源的“有答案”不等于审核。
-        try:validate_publish(Draft.model_validate(q),q)
-        except (ValueError,HTTPException):continue
+        from app.diagnostic_core import verified as core_verified
+        if not core_verified(q):
+            try:validate_publish(Draft.model_validate(q),q)
+            except (ValueError,HTTPException):continue
         items.append({'family':'bank', 'data':q})
     for row in db.execute('SELECT data FROM questions ORDER BY id'):
         q = json.loads(row[0])
@@ -140,8 +142,11 @@ def _install_package(db, raw, expected):
         if item['family']=='original':
             if not original_valid(q):raise ValueError('原创题独立数学核验失败')
         else:
-            form=Draft.model_validate(q);validate_publish(form,q)
-            if not q.get('provenance',{}).get('teacher_reviewed') or not q.get('can_practice') or q.get('status') not in {'ready','reference'}:
+            from app.diagnostic_core import verified as core_verified
+            rule=core_verified(q)
+            if not rule:
+                form=Draft.model_validate(q);validate_publish(form,q)
+            if (not rule and not q.get('provenance',{}).get('teacher_reviewed')) or not q.get('can_practice') or q.get('status') not in {'ready','reference'}:
                 raise ValueError('更新包含未经审核或已撤下的来源题')
         validated.append((item['family'],q))
     retired={}
@@ -179,8 +184,9 @@ def _install_package(db, raw, expected):
             tags=[]
             for kind,field in [('knowledge','knowledge_tags'),('type','type_tags')]:
                 for label in dict.fromkeys(q[field]):
-                    tid=bank.register_tag(db,q['subject'],'junior',kind,label,'teacher')
-                    tags.append({'id':tid,'kind':kind,'label':label,'origin':'teacher'})
+                    origin='source' if q.get('provenance',{}).get('kind')=='original_rule_core' else 'teacher'
+                    tid=bank.register_tag(db,q['subject'],q.get('stage','junior'),kind,label,origin)
+                    tags.append({'id':tid,'kind':kind,'label':label,'origin':origin})
             q['tags']=tags
         existing=db.execute('SELECT data FROM '+table+' WHERE id=?',(local_id,)).fetchone()
         if existing:
@@ -196,7 +202,7 @@ def _install_package(db, raw, expected):
             db.execute('INSERT INTO questions VALUES(?,?,?,?,?)',(local_id,q['knowledge_id'],digest,dumps(q),now()))
         else:
             db.execute('INSERT INTO bank_questions VALUES(?,?,?,?,?,?,?,?,?,?)',
-                       (local_id,source_id,q['subject'],'junior',q['kind'],q['status'],q['difficulty'],checksum(q),dumps(q),now()))
+                       (local_id,source_id,q['subject'],q.get('stage','junior'),q['kind'],q['status'],q['difficulty'],checksum(q),dumps(q),now()))
             db.executemany('INSERT INTO bank_question_tags VALUES(?,?)',[(local_id,t['id']) for t in tags]);changed.append(local_id)
         db.execute('INSERT INTO content_installed_items VALUES(?,?,?,?,1) ON CONFLICT(publisher_id,family,remote_id) DO UPDATE SET local_id=excluded.local_id,active=1',(pid,family,remote_id,local_id))
     from app.admin import supersede

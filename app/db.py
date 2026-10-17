@@ -38,12 +38,12 @@ def audit(db, kind: str, details: dict):
     db.execute("INSERT INTO audit_events(kind,details,created_at) VALUES(?,?,?)", (kind, dumps(details), now()))
 
 
-def initialize(path: Path):
+def initialize(path: Path, *, with_diagnostic_core=False):
     with connect(path) as db:
         path.chmod(0o600)
         db.execute("PRAGMA journal_mode = WAL")
         version = db.execute("PRAGMA user_version").fetchone()[0]
-        if version > 11:
+        if version > 14:
             raise RuntimeError("数据库版本高于应用支持版本，拒绝降级打开。")
         if version == 0:
             db.executescript("""
@@ -263,6 +263,45 @@ def initialize(path: Path):
                 PRAGMA user_version=11;
                 COMMIT;
             """)
+        if version < 12:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS student_subjects(
+                    student_id TEXT PRIMARY KEY REFERENCES students(id),
+                    subject TEXT NOT NULL CHECK(subject IN ('math','physics')));
+                PRAGMA user_version=12;
+                COMMIT;
+            """)
+        if version < 13:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS student_learning_scopes(
+                    student_id TEXT PRIMARY KEY REFERENCES students(id),
+                    stage TEXT NOT NULL CHECK(stage IN ('junior','senior')),
+                    book_id TEXT);
+                CREATE TABLE IF NOT EXISTS scoped_question_types(
+                    id TEXT PRIMARY KEY,book_id TEXT NOT NULL,normalized_name TEXT NOT NULL,
+                    data TEXT NOT NULL,UNIQUE(book_id,normalized_name));
+                PRAGMA user_version=13;
+                COMMIT;
+            """)
+        if version < 14:
+            db.executescript("""
+                BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS training_plans(
+                    id TEXT PRIMARY KEY,student_id TEXT NOT NULL REFERENCES students(id),book_id TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('active','completed','cancelled')),
+                    data TEXT NOT NULL,created_at TEXT NOT NULL);
+                CREATE UNIQUE INDEX IF NOT EXISTS training_active ON training_plans(student_id,book_id) WHERE status='active';
+                CREATE TABLE IF NOT EXISTS training_items(
+                    plan_id TEXT NOT NULL REFERENCES training_plans(id),position INTEGER NOT NULL,
+                    source TEXT NOT NULL CHECK(source IN ('verified','bank')),question_id TEXT NOT NULL,
+                    identity TEXT NOT NULL,content_hash TEXT NOT NULL,
+                    phase TEXT NOT NULL CHECK(phase IN ('training','retest','diagnostic')),
+                    attempt_id TEXT UNIQUE,PRIMARY KEY(plan_id,position));
+                PRAGMA user_version=14;
+                COMMIT;
+            """)
         columns={r[1] for r in db.execute('PRAGMA table_info(imports)')}
         if 'book_id' not in columns:
             db.execute("ALTER TABLE imports ADD COLUMN book_id TEXT NOT NULL DEFAULT 'math-7-1'")
@@ -277,6 +316,13 @@ def initialize(path: Path):
         ensure_templates(db)
         audit(db, "curriculum_sync", {"version": VERSION, "nodes": len(NODES)})
         replenish(db)
+        from app.diagnostic_core import seed as seed_core
+        if with_diagnostic_core:
+            seed_core(db)
+            from app.curated_bank import seed as seed_curated
+            seed_curated(db)
+            from app.senior_bank import seed as seed_senior
+            seed_senior(db)
         from app.courses import sync_questions
         sync_questions(db)
 

@@ -13,6 +13,16 @@ def scope():
     return current.get()
 
 
+def subject_id():
+    return (scope() or {}).get("subject", "math")
+
+
 def book_id():
     value = scope()
-    return f"math-{value['grade']}-{value['term']}" if value else 'math-7-1'
+    if value and value.get('stage') == 'senior':
+        return value['book_id']
+    return f"{subject_id()}-{value['grade']}-{value['term']}" if value else 'math-7-1'
+
+
+def stage_id():
+    return (scope() or {}).get('stage', 'junior')

@@ -45,7 +45,7 @@ def load_entries(paths):
     return list(iter_entries(paths))
 
 
-def apply_batch(db, entries, *, dry_run=True, subject='math'):
+def apply_batch(db, entries, *, dry_run=True, subject='math', transaction=True):
     """Whole batch succeeds or rolls back. Existing answers/student records are immutable."""
     if subject not in {'math','physics'}:raise ValueError('不支持的批量标注学科')
     counts = Counter(total=0); plans = defaultdict(list); seen = set()
@@ -61,7 +61,9 @@ def apply_batch(db, entries, *, dry_run=True, subject='math'):
                     supersede(db,q['id'],invalidate=True)
         plans.clear()
     # A write lock closes the gap between fingerprint validation and snapshot creation.
-    if not dry_run:db.execute('BEGIN IMMEDIATE')
+    if not dry_run:
+        if transaction:db.execute('BEGIN IMMEDIATE')
+        elif not db.in_transaction:raise ValueError('批量标注必须处于调用方事务中')
     try:
         current = {}
         for row in db.execute("SELECT id,source_id,json_extract(data,'$.annotation_source_question_id') original_id FROM bank_questions WHERE subject=? AND stage='junior' AND status!='superseded'",(subject,)):
@@ -106,8 +108,17 @@ def apply_batch(db, entries, *, dry_run=True, subject='math'):
                 new['issues'] = list(dict.fromkeys([*new.get('issues',[]), 'annotation_excluded']))
             # An annotation revision uses the existing immutable quality upgrade path.
             new['quality'] = {**new.get('quality',{}), 'annotation_schema_version':1}
+            if subject in {'physics','math'}:
+                # A different annotation is not covered by an earlier dual review.
+                new['quality'].pop('model_review',None)
             if subject=='physics' and value and 'fine_type_pending' in a.review.issues:
                 new['quality']['flags']=list(dict.fromkeys([*new['quality'].get('flags',[]),'fine_type_pending']))
+            elif subject=='physics':
+                # A precise annotation or exclusion no longer has this blocker.
+                # Retaining it would disable practice and cause reimport churn.
+                flags=[f for f in new['quality'].get('flags',[]) if f!='fine_type_pending']
+                if flags:new['quality']['flags']=flags
+                else:new['quality'].pop('flags',None)
             plans[dataset].append(new)
             buffered += 1
             if buffered >= BATCH_SIZE:

@@ -13,7 +13,7 @@ from typing import Literal
 from app import ai_policy, bank, bank_ai, learning, materials, memory, observations, observation_guard
 from app.course_catalog import BOOK_MAP
 from app.db import connect, dumps, now
-from app.identity import book_id
+from app.identity import book_id, subject_id
 from app.math_catalog import TYPES, resolve_type
 from app.observations import Observation
 from app.question_types import template_type_id
@@ -65,11 +65,15 @@ def resolve_context(db, value):
         if book_id()!='math-7-1':raise HTTPException(403,'该题不在当前学习阶段')
         row,q=learning.get_attempt(db,value.attempt_id)
         result={'source':'verified','attempt_id':row['id'],'stem':q['stem'],'submitted':row['status']=='submitted','type_id':resolve_type(template_type_id(q))}
+        training=db.execute('SELECT plan_id,phase FROM training_items WHERE attempt_id=?',(row['id'],)).fetchone()
+        if training:result.update(training_plan_id=training['plan_id'],training_phase=training['phase'],independent_if_helped=False)
         if row['status']=='submitted':result.update(answer=row['answer'],reference=q['answer'],steps=q['steps'])
         return result
     if value.source=='bank':
         row,q=bank.get_attempt(db,value.attempt_id)
         result={'source':'bank','attempt_id':row['id'],'stem':q['stem'],'options':q.get('options',[]),'submitted':row['status']=='submitted'}
+        training=db.execute('SELECT plan_id,phase FROM training_items WHERE attempt_id=?',(row['id'],)).fetchone()
+        if training:result.update(training_plan_id=training['plan_id'],training_phase=training['phase'],independent_if_helped=False)
         if row['status']=='submitted':result.update(answer=row['answer'],reference=q['answer'],steps=q['steps'])
         return result
     if value.source=='import':
@@ -199,29 +203,41 @@ def create_router(settings):
                 current_types=recalled['items']
                 catalog=[{'id':t['id'],'name':t['name'],'definition':t['can_do'],'goal_id':t['goal_id']} for t in TYPES] if book_id()=='math-7-1' else []
                 book=BOOK_MAP[book_id()]
-                catalog += [{'id':r['id'],'name':json.loads(r['data'])['name'],'definition':json.loads(r['data']).get('description','')} for r in db.execute("SELECT id,data FROM question_types WHERE subject='math' AND grade=? AND term=? AND json_extract(data,'$.source')='ai' LIMIT 80",(book['grade'],book['term']))]
+                from app.diagnostic_core import types_for_book
+                catalog += [{'id':t['id'],'name':t['name'],'definition':t['can_do'],'goal_id':t['goal_id']} for t in types_for_book(book_id())]
+                if book.get('stage') == 'senior':
+                    from app.scoped_types import items
+                    from app.senior_bank import types_for_book as senior_types
+                    catalog += [{'id':t['id'],'name':t['name'],'definition':t['can_do'],'goal_id':t['goal_id']} for t in senior_types(db,book_id())]
+                    catalog += [{'id':t['id'],'name':t['name'],'definition':t.get('description','')} for t in items(db)]
+                else:
+                    catalog += [{'id':r['id'],'name':json.loads(r['data'])['name'],'definition':json.loads(r['data']).get('description','')} for r in db.execute("SELECT id,data FROM question_types WHERE subject=? AND grade=? AND term=? AND json_extract(data,'$.source')='ai' LIMIT 80",(subject_id(),book['grade'],book['term']))]
                 stage_goals=[{k:g[k] for k in ('id','name','can_do','checks','prerequisites')} for u in book['units'] for g in u['goals']]
             last_check = None
             if previous:
                 latest=json.loads(previous[0]['response'])
-                if latest.get('check_question'):
+                if latest.get('check_question') and ai_policy.history_turn(previous[0]['message'], latest, latest.get('student_draft', '')):
                     last_check={'message_id':previous[0]['id'],'question':latest['check_question'],
                                 'teacher_reply':latest['reply']}
-            material_context={'book_id':book_id(),'grade':book['grade'],'term':book['term'],
+            material_context={'subject':subject_id(),'stage':book.get('stage','junior'),'book_id':book_id(),'book_title':book.get('title'),'grade':book['grade'],'term':book['term'],
                 'stage_goals':stage_goals,'type_catalog':catalog,'student_state':current_types,
                 'current_question':context,'focus_type_id':body.type_id,'last_check':last_check,
                 'image_confirmed':bool(confirmed_image),'memory_context':recalled}
             history=[]
             for item in reversed(previous):
                 answer=json.loads(item['response'])
-                history.append(ai_policy.material({'previous_student_message':item['message'],
-                    'previous_student_draft':answer.get('student_draft','')}))
-                history.append({'role':'assistant','content':dumps({k:answer.get(k,'') for k in
-                    ('reply','check_question','recognized_question','transcribed_answer')})})
+                history.extend(ai_policy.history_turn(item['message'], answer, answer.get('student_draft', '')))
             content=dumps({'message':body.message,'student_draft':body.student_draft})
             if images:content=[{'type':'text','text':content}]+[{'type':'image_url','image_url':{'url':'data:image/jpeg;base64,'+base64.b64encode(im).decode()}} for im in images]
             payload=ai_policy.messages(ai_policy.TEACHER,material_context,history,content)
-            reply=await bank_ai.request_json(settings,payload,Reply,vision=bool(images))
+            boundary = ai_policy.boundary_reason(body.message) or ai_policy.boundary_reason(body.student_draft)
+            if boundary:
+                reply = Reply.model_validate(ai_policy.boundary_reply(boundary))
+            else:
+                reply=await bank_ai.request_json(settings,payload,Reply,vision=bool(images))
+                boundary = ai_policy.response_boundary_reason(reply)
+                if boundary:
+                    reply = Reply.model_validate(ai_policy.boundary_reply(boundary))
             if not images and not body.student_draft and observation_guard.ACK.fullmatch(body.message.strip()):
                 # A polite acknowledgement cannot establish understanding, even in prose.
                 reply.reply='不客气，我们用一个小问题再试试。'
@@ -235,7 +251,10 @@ def create_router(settings):
             evidence={'message':body.message,'student_draft':body.student_draft,
                       'image_answer':body.student_draft if confirmed_image else '',
                       'image_confirmed':bool(confirmed_image)}
-            accepted,rejected=await observation_guard.validate(settings,reply.observations,evidence,material_context,last_check)
+            if boundary:
+                accepted, rejected = [], [{'reason': boundary}]
+            else:
+                accepted,rejected=await observation_guard.validate(settings,reply.observations,evidence,material_context,last_check)
             thread_id=body.thread_id or str(uuid.uuid4());message_id=str(uuid.uuid4());timestamp=now()
             image_names=[]
             if images:
@@ -246,8 +265,9 @@ def create_router(settings):
                 db.execute('BEGIN IMMEDIATE')
                 if thread:require_thread(db,thread_id)
                 else:db.execute('INSERT INTO teacher_threads VALUES(?,current_student(),?,?,?,?,?)',(thread_id,book_id(),body.message[:40],dumps(saved_context.model_dump()),timestamp,timestamp))
-                result={**reply.model_dump(exclude={'observations'}),'thread_id':thread_id,'message_id':message_id,'provider':settings.ai_provider,'score_recorded':False,'observations':[],
+                result={**reply.model_dump(exclude={'observations'}),'thread_id':thread_id,'message_id':message_id,'provider':'rules' if boundary else settings.ai_provider,'score_recorded':False,'observations':[],
                         'policy_version':ai_policy.VERSION,'request_fingerprint':fingerprint,'student_draft':body.student_draft,
+                        'boundary':{'version':ai_policy.BOUNDARY_VERSION,'blocked':bool(boundary),'reason':boundary},
                         'state_update':{'accepted':0,'rejected':rejected,
                             'review_unavailable':any(r['reason']=='review_unavailable' for r in rejected)},
                         'images':[{'name':name,'url':f'/api/v1/teacher/threads/{thread_id}/images/{name}'} for name in image_names]}
@@ -258,14 +278,15 @@ def create_router(settings):
                     result['observations'].extend(observations.save(db,[proposal],message_id,
                         evidence[proposal.evidence_source],validation=proof))
                 result['state_update']['accepted']=len(result['observations'])
-                if confirmed_image:
+                if confirmed_image and not boundary:
                     result['image_confirmation_of']=confirmed_image['message_id']
                     result['confirmed_image_context']=context
                     original_image['image_confirmation']={'message_id':message_id,
                         'recognized_question':confirmed_image['recognized_question'], 'student_answer':body.student_draft}
                     db.execute('UPDATE teacher_messages SET response=? WHERE id=? AND thread_id=?',
                         (dumps(original_image),confirmed_image['message_id'],thread_id))
-                mark_help(db,context)
+                if not boundary:
+                    mark_help(db,context)
                 db.execute('UPDATE teacher_messages SET response=? WHERE id=?',(dumps(result),message_id))
                 db.execute('UPDATE teacher_threads SET updated_at=? WHERE id=?',(timestamp,thread_id))
             return result

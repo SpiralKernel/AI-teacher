@@ -17,7 +17,7 @@ CHALLENGE_TYPES = {
     "brackets": "双重括号代入求值", "linear": "含括号与分母的一元一次方程",
     "word_equation": "两类商品与数量关系建模", "segment": "两个中点的线段综合", "angle": "角的倍数与补角建模",
 }
-COARSE_NAMES = {"未分类", "未分类题型", "无法判断", "数学", "初中数学", "数学题", "选择题", "单选题", "多选题", "计算题", "应用题"}
+COARSE_NAMES = {"物理", "初中物理", "物理题", "力学", "电学", "光学", "未分类", "未分类题型", "无法判断", "数学", "初中数学", "数学题", "选择题", "单选题", "多选题", "计算题", "应用题"}
 
 
 def normalize_name(name):
@@ -50,8 +50,9 @@ def ensure_templates(db):
         data = {'id':target['id'],'name':target['name'],'description':target['can_do'],
                 'subject':'math','grade':7,'term':1,'knowledge_ids':[knowledge],
                 'source':'template','needs_review':False,'structures':list(structures)}
-        db.execute("INSERT INTO question_types VALUES(?,'math',7,1,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+        db.execute("INSERT OR IGNORE INTO question_types VALUES(?,'math',7,1,?,?)",
                    (target['id'],normalize_name(target['name']),json.dumps(data,ensure_ascii=False)))
+        db.execute('UPDATE question_types SET data=? WHERE id=?',(json.dumps(data,ensure_ascii=False),target['id']))
 
 
 def register_ai_type(db, item, import_id):

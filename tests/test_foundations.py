@@ -114,7 +114,7 @@ def test_new_types_work_with_login_report_retries_hints_and_stage_isolation(tmp_
         state=client.get('/api/v1/study/home').json()
         assert all(next(t for t in state['types'] if t['id']=='m7a:'+key)['independent_count']==1 for key in CATALOG)
         report=client.get('/api/v1/reports').json()
-        assert report['summary']['independent']==11
+        assert report['summary']['independent']==len(CATALOG)
         from app.courses import evidence
         with connect(settings.database_path) as db:
             # 首次注册学生为demo；维护接口的目标映射也须使用科学记数法目标，而非乘方锚点。
@@ -133,7 +133,7 @@ def test_new_types_work_with_login_report_retries_hints_and_stage_isolation(tmp_
         with connect(settings.database_path) as db:q=json.loads(db.execute('SELECT data FROM questions WHERE id=?',(attempt['question']['id'],)).fetchone()[0])
         result=client.post(f"/api/v1/attempts/{attempt['attempt_id']}/answer",json={'answer':q['answer']})
         assert result.json()['assisted']
-        assert client.get('/api/v1/reports').json()['summary']['independent']==11
+        assert client.get('/api/v1/reports').json()['summary']['independent']==len(CATALOG)
         client.post('/api/v1/auth/stage',json={'grade':8,'term':1})
         assert client.post('/api/v1/study/next',json={'type_id':'m7a:geometry'}).status_code in (403,404)
         assert client.get('/api/v1/reports').json()['summary']['independent']==0

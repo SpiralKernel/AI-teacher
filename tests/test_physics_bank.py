@@ -62,6 +62,19 @@ def test_physics_late_invalid_batch_rolls_back(tmp_path,monkeypatch):
         assert 'annotation' not in json.loads(db.execute("SELECT data FROM bank_questions WHERE id='physics'").fetchone()[0])
 
 
+def test_excluding_an_already_pending_physics_annotation_survives_source_reimport(tmp_path):
+    path=tmp_path/'db.sqlite3';initialize(path);q=physics()
+    with connect(path) as db:bank.import_records(db,'physics-test',[q],{})
+    with connect(path) as db:apply_batch(db,[label(q,True)],subject='physics',dry_run=False)
+    excluded=Entry(question_id=q['id'],source_sha256=source_fingerprint(q),decision='exclude',
+                   reason='独立复核发现来源条件冲突',annotation=None)
+    with connect(path) as db:apply_batch(db,[excluded],subject='physics',dry_run=False)
+    with connect(path) as db:
+        assert bank.import_records(db,'physics-test',[physics()],{})['duplicates']==1
+        current=json.loads(db.execute("SELECT data FROM bank_questions WHERE subject='physics' AND status!='superseded'").fetchone()[0])
+        assert current['status']=='quarantine' and not current['can_practice']
+
+
 def test_ceval_only_labeled_splits_and_hash_checked(tmp_path):
     files=[]
     for split in ('dev','val'):

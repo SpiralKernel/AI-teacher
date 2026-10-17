@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from app import ai_policy, bank, bank_ai, courses
 from app.db import connect, dumps, now
 from app.materials import MAX_FILE, MAX_TOTAL
+from app.identity import subject_id, stage_id
 
 
 class Answer(BaseModel):
@@ -44,24 +45,24 @@ def create_router(settings):
             return {"attempts":attempts,"note":"图片文件不包含在 JSON 中，请使用完整备份保存手写照片。"}
 
     @router.get("/tags")
-    def tags(subject: str = "math", stage: str = "junior", query: str = Query("", max_length=200)):
+    def tags(subject: str | None = None, stage: str | None = None, query: str = Query("", max_length=200)):
         with connect(settings.database_path) as db:
-            return bank.tags(db, subject, stage, query)
+            return bank.tags(db, subject or subject_id(), stage or stage_id(), query)
 
     @router.get("/questions")
-    def questions(subject: str = "math", stage: str = "junior", tag_id: str | None = None, difficulty: int | None = Query(None, ge=1, le=3),
+    def questions(subject: str | None = None, stage: str | None = None, tag_id: str | None = None, difficulty: int | None = Query(None, ge=1, le=3),
                   answer_mode: str | None = None, source_id: str | None = None, query: str = Query("", max_length=200),
                   course_book_id: str | None = Query(None, max_length=80), course_unit_id: str | None = Query(None, max_length=100),
                   limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0, le=100000)):
-        selection = bank.Selection(subject=subject, stage=stage, tag_id=tag_id, difficulty=difficulty, answer_mode=answer_mode, source_id=source_id,
+        selection = bank.Selection(subject=subject or subject_id(), stage=stage or stage_id(), tag_id=tag_id, difficulty=difficulty, answer_mode=answer_mode, source_id=source_id,
                                    course_book_id=course_book_id, course_unit_id=course_unit_id)
         with connect(settings.database_path) as db:
             return bank.search(db, selection, query, limit, offset)
 
     @router.get("/profile")
-    def profile(subject: str = "math", stage: str = "junior"):
+    def profile(subject: str | None = None, stage: str = "junior"):
         with connect(settings.database_path) as db:
-            return bank.profile(db, subject, stage)
+            return bank.profile(db, subject or subject_id(), stage)
 
     @router.post("/next")
     def practice(body: bank.Selection):
@@ -90,8 +91,8 @@ def create_router(settings):
                 candidates={key:t for key,t in candidates.items() if key==body.tag_id}
             if not candidates:
                 raise HTTPException(404,"当前范围没有可选择的标签")
-            course_context = courses.context(db, body.subject, book_id=body.course_book_id, unit_id=body.course_unit_id) if body.stage == "junior" else None
-        prompt="根据初中学生当前科目的有效作答证据，从给定标签目录选出下一步应练的细分知识点或题型。结合课程阶段要求与前置知识，先诊断未测目标，再补有证据的漏洞。待诊断不等于不会；缺题目标不能伪装成已掌握。少量证据只做诊断，不夸大掌握。必须返回目录中真实tag_id，不能创建标签或题目。输出JSON {tag_id:目录ID,difficulty:1到3,reason:简短中文推荐理由}。"
+            course_context = courses.context(db, body.subject, book_id=body.course_book_id, unit_id=body.course_unit_id) if body.stage in {"junior","senior"} else None
+        prompt="根据中学生当前科目与教材范围的有效作答证据，从给定标签目录选出下一步应练的细分知识点或题型。结合课程阶段要求与前置知识，先诊断未测目标，再补有证据的漏洞。待诊断不等于不会；缺题目标不能伪装成已掌握。少量证据只做诊断，不夸大掌握。必须返回目录中真实tag_id，不能创建标签或题目。输出JSON {tag_id:目录ID,difficulty:1到3,reason:简短中文推荐理由}。"
         context={"subject":body.subject,"course_requirements":course_context,"evidence":weak,"tags":[{k:t[k] for k in ("id","kind","label")} for t in candidates.values()]}
         async with tutor_slots:
             choice=await bank_ai.request_json(settings,ai_policy.messages(prompt,context,content="请选择下一步练习。"),bank_ai.Plan)
@@ -165,11 +166,11 @@ def create_router(settings):
                 previous = list(db.execute("SELECT * FROM bank_messages WHERE attempt_id=? ORDER BY id", (attempt_id,)))
                 if len(previous) >= 12:
                     raise HTTPException(429, "本题已讨论12轮，请先整理思路")
-                if row["status"] == "assigned":
+                if row["status"] == "assigned" and not ai_policy.boundary_reason(body.message):
                     db.execute("UPDATE bank_attempts SET assisted=1 WHERE id=?", (attempt_id,))
                 related = {t["id"] for t in q["tags"]}
                 summary = [t for t in bank.profile(db, q["subject"], q["stage"])["tags"] if t["id"] in related]
-                q["course_context"] = courses.context(db, q["subject"], q) if q["stage"] == "junior" else None
+                q["course_context"] = courses.context(db, q["subject"], q) if q["stage"] in {"junior","senior"} else None
             result = await bank_ai.tutor(settings, q, body.message, previous, row["status"] == "submitted", summary)
             with connect(settings.database_path) as db:
                 db.execute("INSERT INTO bank_messages(attempt_id,user_message,response,created_at) VALUES(?,?,?,?)", (attempt_id, body.message, dumps(result), now()))

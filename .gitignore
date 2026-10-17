@@ -10,6 +10,7 @@ __pycache__/
 .DS_Store
 
 output/pdf/
-tmp/pdfs/
+# Temporary database copies, migration digests and extracted pages are private.
+/tmp/
 
 output/evals/

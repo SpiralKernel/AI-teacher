@@ -193,7 +193,7 @@ export function createReportUI(ui) {
           el(
             "p",
             { class: "subtle" },
-            `${data.student.nickname} · ${data.student.grade}年级${data.student.term === 1 ? "上" : "下"}册数学 · ${data.period_label}`,
+            `${data.student.nickname} · ${data.stage === "senior" ? data.book_title : `${data.student.grade}年级${data.subject === "physics" && data.student.grade === 9 ? (data.student.term === 1 ? "全一册·前半进度" : "全一册·后半进度") : (data.student.term === 1 ? "上册" : "下册")}${data.subject_name || "数学"}`} · ${data.period_label}`,
           ),
         ),
         el(

@@ -1,7 +1,7 @@
 import { createAnnotationEditor } from './annotation-editor.js';
 const root = document.querySelector('#admin-root'), notice = document.querySelector('#admin-notice');
 const S = {student:null, page:'dashboard', catalog:null, dashboard:null, list:{items:[],total:0},
-  filters:{family:'bank',subject:'',grade:'',term:'',status:'',reviewed:'all',difficulty:'',query:'',offset:0}, draft:null, preview:null, busy:false, dirty:false};
+  filters:{family:'bank',subject:'',stage:'',grade:'',term:'',status:'',reviewed:'all',difficulty:'',query:'',offset:0}, draft:null, preview:null, busy:false, dirty:false};
 let noticeTimer;
 function el(tag, attrs={}, ...children) {
   const n=document.createElement(tag);
@@ -59,7 +59,8 @@ function filterBar(){const f=S.filters;const refresh=async(key,v)=>{if(!canLeave
   return el('form',{class:'filters',onSubmit:e=>{e.preventDefault();action(()=>refresh('query',query.value));}},
     select('题目来源',[['bank','来源题库'],['draft','维护草稿'],['original','原创核验题']],f.family,v=>action(()=>refresh('family',v))),
     select('科目',[['','全部科目'],...Object.entries(S.catalog.subjects)],f.subject,v=>action(()=>refresh('subject',v))),
-    select('年级',[['','全部年级'],[7,'七年级'],[8,'八年级'],[9,'九年级']],f.grade,v=>action(()=>refresh('grade',v))),
+    select('学段',[['','全部学段'],['junior','初中'],['senior','高中']],f.stage,v=>action(()=>refresh('stage',v))),
+    select('年级',[['','全部年级'],[7,'七年级'],[8,'八年级'],[9,'九年级'],[10,'高一'],[11,'高二'],[12,'高三']],f.grade,v=>action(()=>refresh('grade',v))),
     select('学期',[['','全部学期'],[1,'上学期'],[2,'下学期']],f.term,v=>action(()=>refresh('term',v))),
     f.family==='original'?null:select('审核状态',f.family==='draft'?[['','全部草稿'],['draft','待审核'],['published','已发布'],['withdrawn','已撤下']]:[['','当前版本'],['ready','选择题'],['reference','过程题'],['quarantine','已隔离'],['superseded','历史版本']],f.status,v=>action(()=>refresh('status',v))),
     f.family==='bank'?select('人工核对',[['all','全部审核状态'],['pending','未人工核对'],['reviewed','已人工核对']],f.reviewed,v=>action(()=>refresh('reviewed',v))):null,
@@ -71,7 +72,7 @@ async function openQuestion(q){if(!canLeave())return;S.dirty=false;
   render();document.querySelector('.editor')?.scrollIntoView({block:'start',behavior:'smooth'});
 }
 function questionList(){return el('div',{class:'list-pane'},el('div',{class:'question-list'},S.list.items.length?S.list.items.map(q=>el('article',{class:'question-card'+((S.draft?.id===q.id||S.draft?.published_id===q.id)?' active':'')},
-  el('div',{class:'actions'},el('span',{class:'badge'+(q.reviewed?' blue':'')},stateName[q.state]||q.state),el('small',{},`${S.catalog.subjects[q.subject]||q.subject} · ${q.grade?`${q.grade}年级${q.term===1?'上册':q.term===2?'下册':' / 学期待核对'}`:'册次待核对'} · ${['','基础','进阶','挑战'][q.difficulty]}`)),
+  el('div',{class:'actions'},el('span',{class:'badge'+(q.reviewed?' blue':'')},stateName[q.state]||q.state),el('small',{},`${q.stage==='senior'?'高中':q.stage==='junior'?'初中':'学段待核对'} · ${S.catalog.subjects[q.subject]||q.subject} · ${q.curriculum_book_id|| (q.grade?`${q.grade}年级${q.term===1?'上册':q.term===2?'下册':' / 学期待核对'}`:'册次待核对')} · ${['','基础','进阶','挑战'][q.difficulty]}`)),
   el('p',{},q.stem.length>200?q.stem.slice(0,200)+'…':q.stem),el('p',{class:'answer'},'答案：'+(q.answer.length>100?q.answer.slice(0,100)+'…':q.answer)),
   q.annotation_exclusion?el('p',{class:'notice'},q.annotation_exclusion):q.annotation_issues?.length?el('small',{},`${q.annotation_issues.length} 项标注待核对`):null,
   el('div',{class:'actions'},btn(S.filters.family==='original'?'查看 / 复制':'编辑 / 标注',()=>openQuestion(q)),el('small',{},(q.type_tags||[]).slice(0,2).join(' · '))))) :el('div',{class:'empty'},'没有匹配的题目，试试更换筛选条件。')),
@@ -84,19 +85,28 @@ function editor(){
   const d=S.draft,f=d.form,inputs={};
   const annotationEditor=createAnnotationEditor(f,()=>S.dirty=true);
   const input=(key,rows=3)=>{const n=el('textarea',{rows,value:Array.isArray(f[key])?f[key].join('\n'):f[key]||'',onInput:()=>S.dirty=true});inputs[key]=n;return n;};
-  const subject=select('编辑科目',Object.entries(S.catalog.subjects),f.subject,()=>{updateGoals();S.dirty=true;}),
-    grade=select('编辑年级',[['','请选择年级'],[7,'七年级'],[8,'八年级'],[9,'九年级']],f.grade,()=>{updateGoals();S.dirty=true;}),
+  const stage=select('编辑学段',[['junior','初中'],['senior','高中']],f.stage||'junior',()=>{if(stage.value==='senior'){grade.value='';term.value='';}else if(![7,8,9].includes(Number(grade.value)))grade.value='7';updateGoals();S.dirty=true;}),
+    subject=select('编辑科目',Object.entries(S.catalog.subjects),f.subject,()=>{updateGoals();typePick.hidden=subject.value!=='math';S.dirty=true;}),
+    grade=select('编辑年级',[['','不指定年级'],[7,'七年级'],[8,'八年级'],[9,'九年级'],[10,'高一'],[11,'高二'],[12,'高三']],f.grade,()=>{updateGoals();S.dirty=true;}),
     term=select('编辑学期',[['','请选择学期'],[1,'上学期'],[2,'下学期']],f.term,()=>{updateGoals();S.dirty=true;});
+  const book=select('教材册次', [['','请选择本册教材'],...S.catalog.books.filter(b=>(b.stage||'junior')===stage.value&&b.subject===subject.value).map(b=>[b.id,b.title||b.id])],f.curriculum_book_id||'',()=>{updateGoals();S.dirty=true;});
   const goals=el('select',{multiple:true,size:6,'aria-label':'课程目标',onChange:()=>S.dirty=true});
   function updateGoals(){const selected=goals.options.length?[...goals.selectedOptions].map(o=>o.value):f.curriculum_goal_ids;
-    goals.replaceChildren();const book=S.catalog.books.find(b=>b.id===`${subject.value}-${grade.value}-${term.value}`);
-    if(book)for(const unit of book.units){const group=el('optgroup',{label:unit.name});for(const g of unit.goals)group.append(el('option',{value:g.id,selected:selected.includes(g.id)},g.name));goals.append(group);}}
+    goals.replaceChildren();let selectedBook=stage.value==='senior'?book.value:`${subject.value}-${grade.value}-${term.value}`;
+    if(stage.value==='senior'){
+      const books=S.catalog.books.filter(b=>(b.stage||'junior')==='senior'&&b.subject===subject.value);
+      if(!books.some(b=>b.id===selectedBook))selectedBook='';
+      book.replaceChildren(...[['','请选择本册教材'],...books.map(b=>[b.id,b.title||b.id])].map(([id,title])=>el('option',{value:id},title)));
+      book.value=selectedBook;
+    }
+    const catalogBook=S.catalog.books.find(b=>b.id===selectedBook);
+    if(catalogBook)for(const unit of catalogBook.units){const group=el('optgroup',{label:unit.name||unit.title});for(const g of unit.goals)group.append(el('option',{value:g.id,selected:selected.includes(g.id)},g.name));goals.append(group);}}
   updateGoals();
   const kind=select('作答形式',[['reference','文字 / 过程题'],['single_choice','单项选择题'],['multiple_choice','多项选择题']],f.kind,()=>S.dirty=true);
   const options=el('textarea',{rows:4,value:f.options.map(o=>`${o.key}|${o.text}`).join('\n'),placeholder:'A|第一个选项\nB|第二个选项',onInput:()=>S.dirty=true});
   const difficulty=select('编辑难度',[[1,'基础'],[2,'进阶'],[3,'挑战']],f.difficulty,()=>S.dirty=true);
   const reviewed=el('input',{type:'checkbox'}),note=el('textarea',{rows:2,placeholder:'写明核对依据或修改原因，至少4字','aria-label':'审核说明'});
-  function collect(){const next={...f,subject:subject.value,grade:Number(grade.value)||null,term:Number(term.value)||null,kind:kind.value,difficulty:Number(difficulty.value),
+  function collect(){const next={...f,stage:stage.value,subject:subject.value,grade:stage.value==='senior'?(Number(grade.value)||null):(Number(grade.value)||null),term:stage.value==='senior'?(Number(term.value)||null):(Number(term.value)||null),curriculum_book_id:stage.value==='senior'?book.value||null:null,kind:kind.value,difficulty:Number(difficulty.value),
     curriculum_goal_ids:[...goals.selectedOptions].map(o=>o.value),options:options.value.trim()?options.value.split('\n').filter(v=>v.trim()).map(v=>{const i=v.indexOf('|');if(i<1)throw new Error('选项格式应为 A|选项内容，每行一个。');return {key:v.slice(0,i).trim().toUpperCase(),text:v.slice(i+1).trim()};}):[]};
     for(const [key,n] of Object.entries(inputs))next[key]=['steps','knowledge_tags','type_tags'].includes(key)?n.value.split('\n').map(v=>v.trim()).filter(Boolean):n.value;
     next.annotation=annotationEditor.collect(next);
@@ -107,10 +117,12 @@ function editor(){
   const stem=input('stem',8);stem.className='stem';
   const types=input('type_tags');
   const typePick=select('七上标准题型',[['','选用七上标准题型'],...S.catalog.math_types.map(t=>[t.name,t.name])],'',v=>{if(v){types.value=[...new Set([...types.value.split('\n').filter(Boolean),v])].join('\n');S.dirty=true;}});
+  typePick.hidden=subject.value!=='math';
   const node=el('section',{class:'panel editor'},back(),el('div',{class:'actions'},el('h2',{},'题目与标注'),el('span',{class:'badge'},stateName[d.state]),el('small',{},`修订 ${d.revision}`)),
     el('p',{class:'subtle'},'保存为草稿，人工核对后发布。已发布题目的历史作答不会被改写。'),
     d.has_missing_assets?el('p',{class:'notice'},'原题有缺失图片或材料。可保存标注草稿，当前不能发布。'):null,
-    el('div',{class:'fields-three'},field('科目',subject),field('年级',grade),field('学期',term)),field('题干 / 阅读材料',stem),
+    el('div',{class:'fields-three'},field('学段',stage),field('科目',subject),field('年级（高中可不指定）',grade)),
+    stage.value==='senior'?field('高中教材册次',book):field('学期',term),field('题干 / 阅读材料',stem),
     btn('预览公式与排版',()=>{preview.hidden=false;preview.textContent=collect().stem;math(preview);},'quiet'),preview,
     el('div',{class:'fields-two'},field('作答形式',kind),field('难度',difficulty)),field('选项（每行 A|内容；过程题留空）',options),field('参考答案',input('answer',3)),field('解析步骤（每行一步）',input('steps',5)),
     el('div',{class:'editor-section'},el('h3',{},'把题目放到正确的位置'),field('课程目标（可多选）',goals),field('知识点（每行一项）',input('knowledge_tags')),

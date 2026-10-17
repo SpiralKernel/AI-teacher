@@ -13,6 +13,7 @@ import { createReportUI } from "./report.js";
     authMode: "login",
     aiPanel: null,
     work: null,
+    training: null,
     result: null,
     unit: "",
     written: false,
@@ -160,6 +161,7 @@ import { createReportUI } from "./report.js";
       student: null,
       home: null,
       work: null,
+      training: null,
       result: null,
       messages: [],
       files: [],
@@ -179,42 +181,62 @@ import { createReportUI } from "./report.js";
   async function load() {
     const session = await api("/auth/session");
     S.student = session.student;
+    S.availableBooks = session.available_books || [];
     S.registrationEnabled = session.registration_enabled !== false;
     S.inviteRequired = session.registration_requires_invite === true;
     S.authMode = session.needs_setup && S.registrationEnabled ? "register" : "login";
     S.needsSetup = session.needs_setup;
-    if (S.student) S.home = await api("/study/home");
+    if (S.student) {
+      S.home = await api("/study/home");
+      S.training = (await api("/study/training-plans")).plan;
+    }
     render();
   }
-  function stageFields(grade = 7, term = 1) {
-    const g = select(
-      "年级",
-      [
-        [7, "七年级"],
-        [8, "八年级"],
-        [9, "九年级"],
-      ],
-      grade,
-      () => {},
-    );
-    const t = select(
-      "学期",
-      [
-        [1, "上学期"],
-        [2, "下学期"],
-      ],
-      term,
-      () => {},
-    );
-    return {
-      node: el(
-        "div",
-        { class: "split-fields" },
-        field("年级", g),
-        field("学期", t),
-      ),
-      get: () => ({ grade: Number(g.value), term: Number(t.value) }),
+  function stageFields(grade = 7, term = 1, subject = "math", level = "junior", bookId = "") {
+    grade = grade || 7; term = term || 1;
+    const remembered = { [subject]: {grade, term} };
+    const rememberedBooks = { [subject]: bookId };
+    let current = subject;
+    const g = select("年级", [], grade, () => {});
+    const t = select("学期", [], term, () => {});
+    const book = select("高中教材册次", [], bookId, () => {});
+    const juniorFields = el("div", {class:"split-fields"}, field("学习年级",g), field("册次 / 进度",t));
+    const seniorFields = field("教材册次",book);
+    const levelSelect = select("学段", [["junior","初中"],["senior","高中"]], level, () => refill());
+    const refill = () => {
+      juniorFields.hidden = levelSelect.value !== "junior";
+      seniorFields.hidden = levelSelect.value !== "senior";
+      const books = (S.availableBooks || []).filter(b => b.subject === current);
+      book.replaceChildren(...books.map(b => el("option", {value:b.id}, b.title)));
+      if (books.some(b => b.id === rememberedBooks[current])) book.value = rememberedBooks[current];
+      const saved = remembered[current] || {grade: current === "physics" ? 8 : 7, term: 1};
+      g.replaceChildren(...(current === "physics" ? [[8,"八年级"],[9,"九年级"]] : [[7,"七年级"],[8,"八年级"],[9,"九年级"]]).map(([v,n]) => el("option", {value:v}, n)));
+      g.value = saved.grade;
+      const terms = () => {
+        const all = current === "physics" && Number(g.value) === 9;
+        t.replaceChildren(el("option", {value:1}, all ? "全一册 · 前半进度" : "上册"), el("option", {value:2}, all ? "全一册 · 后半进度" : "下册"));
+        t.value = saved.term;
+      };
+      g.onchange = terms; terms();
     };
+    const sub = select("科目", [["math","数学"],["physics","物理"]], current, () => {
+      remembered[current] = {grade:Number(g.value),term:Number(t.value)};
+      rememberedBooks[current] = book.value;
+      current = sub.value; refill();
+    });
+    refill();
+    return {
+      node: el("div", {}, field("学段",levelSelect), field("科目", sub), juniorFields, seniorFields),
+      get: () => levelSelect.value === "senior"
+        ? {subject:current,stage:"senior",book_id:book.value}
+        : {subject:current,stage:"junior",grade:Number(g.value),term:Number(t.value)},
+    };
+  }
+  function subjectName() { return S.student?.subject === "physics" ? "物理" : "数学"; }
+  function stageName() {
+    if (S.student.stage === "senior") return S.student.book_title || "高中";
+    if (S.student.subject === "physics" && S.student.grade === 9) return `九年级全一册 · ${S.student.term === 1 ? "前半" : "后半"}进度`;
+    return `${S.student.grade}年级${S.student.term === 1 ? "上" : "下"}册`;
   }
   function login() {
     const register = S.authMode === "register";
@@ -309,7 +331,7 @@ import { createReportUI } from "./report.js";
           "p",
           { class: "subtle" },
           register
-            ? "选好年级和学期，先从数学开始。"
+            ? "选好科目和学习阶段，从基础诊断开始。"
             : "登录后继续自己的练习与学习记录。",
         ),
         el(
@@ -338,6 +360,33 @@ import { createReportUI } from "./report.js";
   }
   async function refresh() {
     S.home = await api("/study/home");
+    if (S.training) S.training = await api(`/study/training-plans/${S.training.id}`);
+  }
+  async function continueTraining() {
+    const value = await api(`/study/training-plans/${S.training.id}/next`, {});
+    Object.assign(S, {training:value.plan, work:value.work, mode:"bank", result:null,
+      answer:"", partAnswers:{}, choices:[], files:[], review:null});
+    await refresh(); render();
+    document.querySelector("#work")?.scrollIntoView({block:"start",behavior:"smooth"});
+  }
+  function trainingCard() {
+    const p = S.training;
+    return el("section", {class:"card training-card"},
+      el("h2", {}, p ? (p.mode === "training" ? "针对加练与独立复测" : "独立诊断 / 复习") : "下一步，练什么？"),
+      p ? el("p", {}, `${p.name} · 难度 ${p.difficulty} · ${p.answered} / ${p.total} 题`) : null,
+      el("p", {class:"subtle"}, p ? p.reason : "根据独立答题证据安排练习；证据不足时，先做几道核验新题。"),
+      p?.ai_reason ? el("p", {class:"tiny"}, `AI计划建议：${p.ai_reason}`) : null,
+      p ? el("p", {class:"tiny"}, p.note) : null,
+      p?.status === "completed" ? el("p", {}, `本轮已完成。独立复测 / 诊断 ${p.retest_correct} / ${p.retest_answered} 题答对，其中 ${p.independent_retests} 题计入有效独立证据。请结合下方题型状态查看，不以一轮成绩宣布掌握。`) : null,
+      el("div", {class:"actions"},
+        !p || p.status !== "active" ? btn("安排下一轮", async()=>{
+          S.training = await api("/study/training-plans", {}); render();
+        }, "primary") : btn(p.answered ? "恢复本轮练习" : `开始${p.training_count ? ` ${p.training_count} 道加练 + ${p.retest_count} 道复测` : ` ${p.retest_count} 道独立新题`}`, continueTraining, "primary"),
+        p?.status === "active" ? btn("结束本轮", async()=>{
+          await api(`/study/training-plans/${p.id}/cancel`, {});
+          if (S.work?.training_plan_id === p.id) {S.work=null; S.result=null;}
+          S.training=null; await refresh(); render();
+        }, "quiet") : null));
   }
   async function start(typeId = null) {
     const w = await api("/study/next", {
@@ -363,7 +412,7 @@ import { createReportUI } from "./report.js";
       ?.scrollIntoView({ block: "start", behavior: "smooth" });
   }
   function settings() {
-    const stage = stageFields(S.student.grade, S.student.term);
+    const stage = stageFields(S.student.grade, S.student.term, S.student.subject || "math", S.student.stage || "junior", S.student.book_id || "");
     const shade = el("div", { class: "dialog-shade" });
     const updateInfo = el("p", {class:"subtle"}, "联网检查题库版本；更新会保留已有学习记录。");
     const updateActions = el("div", {class:"actions"});
@@ -420,12 +469,12 @@ import { createReportUI } from "./report.js";
           el("h2", { id: "settings-title" }, "学习设置"),
           btn("关闭", close, "quiet"),
         ),
-        el("p", { class: "subtle" }, `${S.student.nickname} · 数学`),
+        el("p", { class: "subtle" }, `${S.student.nickname} · ${subjectName()}`),
         stage.node,
         el(
           "p",
           { class: "subtle" },
-          "只展示所选年级、学期的题目。切换阶段会保留之前的记录。",
+            "只显示所选科目与教材范围。高中按册次学习；切换会保留学习记录。",
         ),
         btn(
           "保存学习阶段",
@@ -448,14 +497,14 @@ import { createReportUI } from "./report.js";
     const home = S.home;
     const chapter = select(
       "练习章节",
-      [["", "本学期全部章节"], ...home.book.units.map((u) => [u.id, u.name])],
+      [["", "本册全部章节"], ...home.book.units.map((u) => [u.id, u.name])],
       S.unit,
       (v) => (S.unit = v),
     );
     const format = select(
       "作答方式",
       [
-        ["numeric", "短答练习"],
+        ["numeric", home.book.id === "math-7-1" ? "短答练习" : "核心诊断练习"],
         ["written", "文字 / 拍照题"],
         ["choice", "选择题"],
       ],
@@ -518,9 +567,10 @@ import { createReportUI } from "./report.js";
           { class: "tiny" },
           home.book.id === "math-7-1"
             ? "短答题的答案已检查，独立完成后会更新题型状态。选择题和文字 / 拍照题保留练习记录，来源答案仍需核对。"
-            : "当前阶段使用与学习内容匹配的来源题。答案还需核对的题目会保存记录，暂不用于判断掌握状态。",
+            : "规则核心题可记录独立证据；精选来源题和文字 / 拍照题用于学习反馈。题量不足时保留“未评估”，不会据此宣布掌握。",
         ),
       ),
+      trainingCard(),
       S.work ? workspace() : null,
       progress(),
     );
@@ -547,6 +597,8 @@ import { createReportUI } from "./report.js";
       ),
       el("div", { class: "question-stem" }, q.diagram?.kind === "square_grid" ? q.stem.split("图形位置：")[0] : q.stem),
     );
+    if (w.training_plan_id) node.prepend(el("p", {class:"training-phase"},
+      `第 ${w.position} 题 · ${w.training_phase === "training" ? "加练：可以提问，本题不增加掌握证据" : "独立新题：请先独立作答；求助后本题不计独立证据"}`));
     const formats = {single_choice:"单项选择",multiple_choice:"多项选择",fill_blank:"填空",calculation:"计算",proof:"证明",application:"应用",composite:"综合解答",short_answer:"解答"};
     if (q.annotation) node.append(el("p", {class:"tiny"}, formats[q.annotation.response_format] || "解答"));
     if (q.diagram?.kind === "square_grid") {
@@ -618,7 +670,7 @@ import { createReportUI } from "./report.js";
           el(
             "p",
             { class: "tiny" },
-            w.source === "verified" && r.evidence_weight > 0 && !r.assisted
+            w.training_plan_id ? (r.evidence_weight > 0 && !r.assisted ? "独立复测记录已保存，题型状态按已有规则更新。" : "学习记录已保存；加练、求助或重复作答不增加独立证据。") : w.source === "verified" && r.evidence_weight > 0 && !r.assisted
               ? "已保存独立作答记录。"
               : w.source === "bank"
                 ? "已保存作答记录。来源答案或 AI 评阅经核验前，不计入可靠题量。"
@@ -627,7 +679,7 @@ import { createReportUI } from "./report.js";
           el(
             "div",
             { class: "actions" },
-            btn("下一题", () => start(), "primary"),
+            btn(w.training_plan_id ? (S.training?.status === "completed" ? "查看本轮结果" : "继续本轮") : "下一题", w.training_plan_id ? continueTraining : () => start(), "primary"),
             btn(
               "继续问 AI",
               () =>
@@ -845,6 +897,7 @@ import { createReportUI } from "./report.js";
   }
   function progress() {
     const groups = S.home.types;
+    const policy = S.home.evaluation_policy || {};
     return el(
       "details",
       { class: "card progress" },
@@ -854,6 +907,10 @@ import { createReportUI } from "./report.js";
         { class: "subtle" },
         "每种题至少独立完成 5 道不同的有效练习，再结合最近表现判断。未评估不代表不会。",
       ),
+      el("details", {class:"state-policy"}, el("summary", {}, "学情是怎么判断的？"),
+        el("p", {}, `至少 ${policy.minimum_distinct || 5} 道不同的有效独立练习才判断题型表现；重点参考最近 ${policy.evidence_window || 8} 条，旧证据每 ${policy.half_life_days || 30} 天降低一半权重。`),
+        el("p", {}, "问知识只记录兴趣，自述不会先待确认；具体错答经过复核后才记录困难。得到提示、照抄解答和 AI 评阅不增加独立掌握证据。"),
+        el("p", {}, "长期未练会建议复测，历史记录仍保留。学情线索不准确时可以撤回。")),
       groups.length
         ? groups.map((t) =>
             el(
@@ -868,6 +925,15 @@ import { createReportUI } from "./report.js";
                   {},
                   `${t.independent_count} 道有效独立练习${t.recorded > t.independent_count ? ` · 共记录 ${t.recorded} 次作答` : ""} · ${t.reason}`,
                 ),
+                t.independent_count || t.learning_notes?.length ? el("details", {class:"type-evidence"},
+                  el("summary", {}, "查看判断依据"),
+                  el("p", {}, `近${t.evidence_summary?.half_life_days || 30}天 ${t.evidence_summary?.recent_independent_count || 0} 道有效独立练习；本次参考最近 ${t.evidence_summary?.sample_count || 0} 条。`),
+                  (t.learning_notes || []).map(note=>el("div", {class:"learning-note"},
+                    el("p", {}, note.note), el("blockquote", {}, note.evidence_quote),
+                    btn("撤回这条学情线索", async()=>{
+                      await api(`/teacher/observations/${note.id}/dismiss`, {});
+                      await refresh();render();
+                    }, "note-dismiss")))) : null,
               ),
               el(
                 "span",
@@ -900,7 +966,7 @@ import { createReportUI } from "./report.js";
         el(
           "span",
           { class: "stage-label" },
-          `${S.student.nickname} · ${S.student.grade}年级${S.student.term === 1 ? "上" : "下"}册 · 数学`,
+          `${S.student.nickname} · ${stageName()} · ${subjectName()}`,
         ),
         btn("学情报告", () => reportUI.open(), "report-entry-button"),
         el(
@@ -955,7 +1021,7 @@ import { createReportUI } from "./report.js";
             ? bankPage()
             : S.aiPanel === "imports"
               ? importUI.page()
-              : teacherUI.page(),
+              : el("div", {}, trainingCard(), teacherUI.page()),
         el(
           "footer",
           { class: "footer" },

@@ -10,7 +10,8 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.db import audit, dumps, now
-from app.identity import scope, book_id
+from app.identity import scope, book_id, subject_id, stage_id
+from app.diagnostic_core import trusted, verified as core_verified
 
 SUBJECTS = {
     "math": "数学", "chinese": "语文", "english": "英语", "physics": "物理",
@@ -22,7 +23,7 @@ QUALITY_SNAPSHOT_FIELDS = ('quality', 'fine_type_annotations', 'derived_knowledg
     'grade', 'term', 'difficulty', 'difficulty_raw', 'kind', 'status', 'stem', 'options', 'answer', 'steps',
     'knowledge_tags', 'type_tags', 'derived_type_tags', 'tags_source', 'display_stem',
     'curriculum_minimum_grade', 'curriculum_minimum_book', 'source_images', 'provenance', 'annotation',
-    'annotation_source_question_id', 'annotation_source_sha256', 'annotation_exclusion')
+    'annotation_source_question_id', 'annotation_source_sha256', 'annotation_exclusion', 'core_spec', 'curriculum_goal_ids', 'curriculum_book_id', 'foundation_skill_ids')
 
 
 def quality_snapshot(q):
@@ -30,8 +31,8 @@ def quality_snapshot(q):
 
 
 class Selection(BaseModel):
-    subject: str = "math"
-    stage: str = "junior"
+    subject: str = Field(default_factory=subject_id)
+    stage: str = Field(default_factory=stage_id)
     tag_id: str | None = Field(default=None, max_length=100)
     difficulty: int | None = Field(default=None, ge=1, le=3)
     answer_mode: str | None = None
@@ -46,11 +47,21 @@ def normalized(value):
     return "".join(unicodedata.normalize("NFKC", value).split()).casefold()
 
 
+def content_hash(q):
+    if q['stage']=='senior':
+        # Case is mathematical content (Q/q, R/r, A/a), not a search preference.
+        raw=dumps([q['stage'],q['stem'],q.get('options',[]),str(q.get('answer',''))])
+        raw=''.join(unicodedata.normalize('NFKC',raw).split())
+    else:
+        raw=normalized(q['stage']+q['stem']+dumps(q.get('options',[]))+str(q.get('answer','')))
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def register_tag(db, subject, stage, kind, label, origin="source"):
     label = unicodedata.normalize("NFKC", label).strip()[:500]
     tag_id = "tag:" + hashlib.sha256(f"{subject}:{stage}:{kind}:{normalized(label)}".encode()).hexdigest()[:24]
     db.execute("INSERT OR IGNORE INTO bank_taxonomy VALUES(?,?,?,?,?,?,?)",
-               (tag_id, subject, stage, kind, label, origin, int(origin in {"ai", "luna", "heuristic", "source_derived"})))
+               (tag_id, subject, stage, kind, label, origin, int(origin in {"ai", "luna", "heuristic", "source_derived", "model_review"})))
     return tag_id
 
 
@@ -63,6 +74,8 @@ def import_records(db, dataset, records, manifest, *, transaction=True):
     inserted_ids = []
     for raw in records:
         q = dict(raw)
+        if q.get('quality'):
+            q['quality'] = dict(q['quality'])
         if q.get('annotation'):
             from app.question_annotation import validate_for_question
             q['annotation'] = validate_for_question(q['annotation'], q).model_dump()
@@ -75,19 +88,26 @@ def import_records(db, dataset, records, manifest, *, transaction=True):
             if current and not q.get('annotation_source_sha256'):
                 from app.question_annotation import source_fingerprint
                 saved = json.loads(current[0])
-                if saved.get('annotation_source_sha256') and source_fingerprint({**q,'id':saved['annotation_source_question_id']}) == saved['annotation_source_sha256']:
+                if (saved.get('annotation_source_sha256') and saved['kind'] == q['kind']
+                        and source_fingerprint({**q,'id':saved['annotation_source_question_id']}) == saved['annotation_source_sha256']):
                     for field in ('annotation','annotation_source_question_id','annotation_source_sha256','annotation_exclusion','fine_type_annotations'):
                         q[field] = saved.get(field)
                     q['quality']['annotation_schema_version'] = 1
-                    if q['subject']=='physics' and 'fine_type_pending' in (saved.get('annotation') or {}).get('review',{}).get('issues',[]):
+                    if q['subject'] in {'physics', 'math'} and 'fine_type_pending' in (saved.get('annotation') or {}).get('review',{}).get('issues',[]):
                         q['quality']['flags']=list(dict.fromkeys([*q['quality'].get('flags',[]),'fine_type_pending']))
+                    if q['subject'] in {'physics', 'math'} and saved.get('quality', {}).get('model_review'):
+                        # Keep review evidence only while the source AND kind match.
+                        q['quality']['model_review'] = saved['quality']['model_review']
+                        flags = [f for f in q['quality'].get('flags', []) if f != 'fine_type_pending']
+                        if flags:q['quality']['flags'] = flags
+                        else:q['quality'].pop('flags', None)
                     if saved.get('annotation_exclusion'):
                         q['status'] = 'quarantine'
             if current and quality_snapshot(json.loads(current[0])) == quality_snapshot(q):
                 counts['duplicates'] += 1
                 continue
         # 题干相同但选项不同应保留；跨文件相同题按内容去重。
-        digest = hashlib.sha256(normalized(q["stage"] + q["stem"] + dumps(q.get("options", [])) + str(q.get("answer", ""))).encode()).hexdigest()
+        digest = content_hash(q)
         if q.get('has_missing_assets'):
             from app.math_quality import question_identity
             digest = hashlib.sha256((q['stage'] + question_identity(q) + str(q.get('answer', ''))).encode()).hexdigest()
@@ -140,6 +160,12 @@ def import_records(db, dataset, records, manifest, *, transaction=True):
             tag_id = register_tag(db, q['subject'], q['stage'], 'type', label, origin)
             if not any(t['id'] == tag_id for t in tags):
                 tags.append({'id': tag_id, 'kind': 'type', 'label': label, 'origin': origin})
+        if q['subject'] in {'physics', 'math'} and q.get('quality', {}).get('model_review', {}).get('status')=='passed' and q.get('annotation'):
+            origin = 'luna' if q['subject'] == 'physics' else 'model_review'
+            for label in dict.fromkeys(q['annotation']['knowledge']['primary'] + q['annotation']['knowledge']['supporting']):
+                tag_id = register_tag(db, q['subject'], q['stage'], 'knowledge', label, origin)
+                if not any(t['id'] == tag_id for t in tags):
+                    tags.append({'id': tag_id, 'kind': 'knowledge', 'label': label, 'origin': origin})
         q["tags"] = tags
         db.execute("INSERT INTO bank_questions VALUES(?,?,?,?,?,?,?,?,?,?)",
                    (q["id"], dataset, q["subject"], q["stage"], q["kind"], q["status"], q["difficulty"], digest, dumps(q), now()))
@@ -164,6 +190,19 @@ def public(q, reveal=False):
     if q.get('annotation'):
         from app.question_annotation import public_annotation
         result['annotation'] = public_annotation(q['annotation'], reveal)
+        review = q.get('quality', {}).get('model_review', {})
+        if reveal and q['subject'] in {'physics', 'math'} and review.get('status')=='passed':
+            from app.question_annotation import source_fingerprint
+            annotation_hash = hashlib.sha256(json.dumps(q['annotation'], ensure_ascii=False,
+                sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            source_hash = source_fingerprint({**q, 'id':q.get('annotation_source_question_id') or q['id']})
+            if annotation_hash == review.get('annotation_sha256') and source_hash == review.get('source_sha256'):
+                # Source explanations remain in the immutable snapshot. Display the
+                # checked derivation, including any later AI adjudication, instead.
+                parts = q['annotation']['parts']
+                result['steps'] = [line for index, part in enumerate(parts, 1)
+                                   for line in ([f'第{index}问：{part["prompt"]}'] if len(parts)>1 else []) + part['solution_steps']]
+                result['steps_source'] = 'model_reviewed_annotation'
     return result
 
 
@@ -171,7 +210,7 @@ def catalog(db):
     if scope():
         where,args=clauses(Selection())
         rows=[dict(r) for r in db.execute("SELECT q.subject,q.stage,q.status,COUNT(*) count,SUM(json_extract(q.data,'$.can_practice')) playable FROM bank_questions q WHERE "+where+" GROUP BY q.subject,q.stage,q.status",args)]
-        return {"subjects":[{"id":"math","name":"数学"}],"stages":{"junior":"初中"},"counts":rows,"sources":[]}
+        return {"subjects":[{"id":subject_id(),"name":SUBJECTS[subject_id()]}],"stages":{stage_id():STAGES[stage_id()]},"counts":rows,"sources":[]}
     rows = [dict(r) for r in db.execute("SELECT subject,stage,status,COUNT(*) count,SUM(json_extract(data,'$.can_practice')) playable FROM bank_questions WHERE status!='superseded' GROUP BY subject,stage,status")]
     return {"subjects": [{"id": key, "name": label} for key, label in SUBJECTS.items()], "stages": STAGES,
             "counts": rows, "sources": [{"id": r["id"], "manifest": json.loads(r["manifest"]), "imported_at": r["imported_at"]} for r in db.execute("SELECT * FROM bank_sources")],
@@ -180,21 +219,27 @@ def catalog(db):
 
 def clauses(selection, playable=False, include_history=False):
     if scope():
-        if selection.subject != "math" or selection.stage != "junior" or (selection.course_book_id and selection.course_book_id != book_id()):
+        if selection.subject != subject_id() or selection.stage != stage_id() or (selection.course_book_id and selection.course_book_id != book_id()):
             raise HTTPException(403,"题库只开放当前学习阶段")
         selection = selection.model_copy(update={"course_book_id":book_id()})
     if selection.subject not in SUBJECTS or selection.stage not in STAGES:
         raise HTTPException(422, "请选择已有学科与学段")
     where = ["q.subject=?", "q.stage=?", "q.status!='quarantine'" if include_history else "q.status NOT IN ('quarantine','superseded')"]
     args = [selection.subject, selection.stage]
-    if scope():
+    if scope() and stage_id()=='junior' and selection.subject=='physics':
+        # Physics sources with unknown semester remain available to the editor,
+        # never silently become a student's current-stage exercise.
+        where += ["json_extract(q.data,'$.grade')=?", "json_extract(q.data,'$.term')=?"]
+        args += [scope()["grade"],scope()["term"]]
+    if scope() and stage_id()=='junior':
         where += ["(json_extract(q.data,'$.grade') IS NULL OR json_extract(q.data,'$.grade')=?)", "(json_extract(q.data,'$.term') IS NULL OR json_extract(q.data,'$.term')=?)"]
         args += [scope()["grade"],scope()["term"]]
     from app.courses import validate_scope, scope_goals, VERSION as COURSE_VERSION
     validate_scope(selection.subject, selection.course_book_id, selection.course_unit_id)
     if selection.course_book_id:
-        if selection.stage != "junior":
-            raise HTTPException(422, "当前课程目标仅覆盖初中")
+        from app.course_catalog import BOOK_MAP
+        if BOOK_MAP[selection.course_book_id].get('stage','junior') != selection.stage:
+            raise HTTPException(422, "课程册次与学段不匹配")
         ids = [g["id"] for g in scope_goals(selection.course_book_id, selection.course_unit_id)]
         where.append("EXISTS (SELECT 1 FROM course_question_links cl WHERE cl.question_id=q.id AND cl.version=? AND cl.goal_id IN (" + ",".join("?" for _ in ids) + "))")
         args += [COURSE_VERSION, *ids]
@@ -250,14 +295,18 @@ def get_attempt(db, attempt_id):
 def next_question(db, selection):
     db.execute("BEGIN IMMEDIATE")
     where, args = clauses(selection, playable=True)
+    if not selection.allow_challenge:where+=" AND q.difficulty<3"
     active = db.execute("SELECT id,question_id FROM bank_attempts WHERE student_id=current_student() AND status='assigned'").fetchone()
     if active and db.execute("SELECT 1 FROM bank_questions q WHERE q.id=? AND " + where, [active["question_id"], *args]).fetchone():
         row, q = get_attempt(db, active["id"])
+        if q.get('provenance',{}).get('kind')=='original_rule_core' and not core_verified(q):
+            raise HTTPException(409,'核心题核验失败，请更换题目并联系维护者')
         review = db.execute("SELECT data FROM bank_reviews WHERE attempt_id=?", (row["id"],)).fetchone()
         return {"attempt_id": row["id"], "question": public(q), "review": json.loads(review[0]) if review else None, "resumed": True}
     # 先查可用题，空筛选不跳过学生当前作答。按最少作答次数随机。
     candidates = list(db.execute("""SELECT q.id,q.data,(SELECT COUNT(*) FROM bank_attempts a WHERE a.question_id=q.id AND a.student_id=current_student()) n
         FROM bank_questions q WHERE """ + where + " ORDER BY n,RANDOM() LIMIT 1000", args))
+    candidates=[r for r in candidates if json.loads(r['data']).get('provenance',{}).get('kind')!='original_rule_core' or core_verified(json.loads(r['data']))]
     if not candidates:
         raise HTTPException(404, "当前筛选没有可练习题；缺图或缺参考答案的材料仅供查阅")
     if not selection.difficulty:
@@ -304,6 +353,8 @@ def evidence_identity(q):
 def finish(db, row, q, answer, verdict, base_weight, explanation=None):
     if row["status"] != "assigned":
         raise HTTPException(409, "这道作答已完成或已切换")
+    from app.training import grading_context
+    training = grading_context(db, row['id'], bool(row['assisted']))
     identity = evidence_identity(q)
     repeated = any(not json.loads(previous[0]).get('evidence_invalidated') and evidence_identity(json.loads(previous[0])) == identity for previous in db.execute(
         """SELECT q.data FROM bank_attempts a JOIN bank_questions q ON q.id=a.question_id
@@ -312,6 +363,10 @@ def finish(db, row, q, answer, verdict, base_weight, explanation=None):
     result = {"correct": verdict == "correct", "verdict": verdict, "answer": q["answer"], "steps": q["steps"],
               "evidence_weight": weight, "assisted": bool(row["assisted"]), "repeated": bool(repeated), "explanation": explanation,
               "assessment_source": "source_answer" if base_weight == 1 else "ai_review_confirmed"}
+    if training:
+        result.update(training)
+        if not training['independent_eligible']:
+            result['evidence_weight'] = 0
     if q.get('annotation'):
         from app.question_annotation import public_annotation
         result['annotation'] = public_annotation(q['annotation'], reveal=True)
@@ -325,6 +380,8 @@ def answer_choice(db, attempt_id, value):
     row, q = get_attempt(db, attempt_id)
     if q["answer_mode"] != "choice":
         raise HTTPException(422, "本题需要文字或拍照作答")
+    if q.get('provenance',{}).get('kind')=='original_rule_core' and not core_verified(q):
+        raise HTTPException(409,'核心题核验失败，请更换题目并联系维护者')
     answer = canonical_choice(value, q)
     if row["status"] == "submitted":
         if row["answer"] == answer:

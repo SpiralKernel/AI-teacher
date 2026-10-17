@@ -11,7 +11,6 @@ SENSITIVE = {"difficulty", "guided_success", "understanding_check", "reviewed_su
 CHECKED = {"guided_success", "understanding_check"}
 SELF_REPORT = re.compile(r"不会|不懂|没(?:有)?(?:懂|明白|学会)|不(?:太)?(?:理解|明白|会做)|搞不懂|算不出|不知道怎么|看不懂")
 ACK = re.compile(r"^[\s，。！？,.!?]*(?:(?:我|好的?|懂了|明白了|会了|知道了|谢谢|嗯|哦|是的|对的|可以)[\s，。！？,.!?]*)+$")
-INSTRUCTION = re.compile(r"(?:忽略|无视|覆盖).{0,12}(?:指令|规则|提示词)|(?:直接|把我|请).{0,10}(?:标记|记为|改成).{0,12}(?:掌握|通过|稳定|满分)|system\s*:|<\/?system>", re.I)
 
 
 class Decision(BaseModel):
@@ -29,6 +28,8 @@ def prerequisite(proposal, evidence, last_check=None):
     """Return an explicit rejection reason; uncertainty must never become mastery."""
     quote = proposal.evidence_quote.strip()
     text = evidence.get(proposal.evidence_source, "")
+    if ai_policy.boundary_reason(text):
+        return "instruction_not_learning_evidence"
     if not quote or quote not in text:
         return "quote_not_in_selected_source"
     if proposal.evidence_source == "image_answer" and not evidence.get("image_confirmed"):
@@ -42,7 +43,7 @@ def prerequisite(proposal, evidence, last_check=None):
     if proposal.kind in SENSITIVE:
         if proposal.kind == 'reviewed_success' and not evidence.get('image_confirmed'):
             return 'reviewed_work_not_confirmed'
-        if INSTRUCTION.search(quote) or ACK.fullmatch(quote):
+        if ACK.fullmatch(quote):
             return "instruction_or_acknowledgement"
         # A request for an explanation is not evidence of an attempted solution.
         if (proposal.evidence_source == "message" and
@@ -79,7 +80,7 @@ async def validate(settings, proposals, evidence, context, last_check=None):
     if not candidates:
         return accepted, rejected
     check = {k: last_check[k] for k in ('message_id', 'question')} if last_check else None
-    payload = {"student_evidence": evidence, "current_question": context.get("current_question"),
+    payload = {"subject":context.get("subject","math"),"book_id":context.get("book_id"),"student_evidence": evidence, "current_question": context.get("current_question"),
                "last_check": check, "stage_goals": context["stage_goals"],
                "type_catalog": context["type_catalog"],
                "candidates": [{"candidate_index": i, **p.model_dump(exclude={"note"})} for i, p in candidates]}

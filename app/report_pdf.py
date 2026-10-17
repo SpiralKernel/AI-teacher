@@ -23,7 +23,8 @@ def render(value):
     heading=ParagraphStyle('heading',parent=style,fontSize=15,leading=24,spaceBefore=15,spaceAfter=9)
     small=ParagraphStyle('small',parent=style,fontSize=8,leading=13,textColor=colors.HexColor('#625E5D'))
     def p(text,st=style):return Paragraph(escape(str(text)).replace('\n','<br/>'),st)
-    story=[p('学习，一步一步看得见。',title),p(f"{value['student']['nickname']} / {value['student']['grade']}年级{'上' if value['student']['term']==1 else '下'}册数学 / {value['period_label']}",style),p('生成于 '+datetime.fromisoformat(value['generated_at']).astimezone(ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M')+' 北京时间',small),Spacer(1,10*mm)]
+    stage_title = value.get('book_title') if value.get('stage') == 'senior' else f"{value['student']['grade']}年级{('全一册·'+('前半进度' if value['student']['term']==1 else '后半进度')) if value.get('subject')=='physics' and value['student']['grade']==9 else ('上册' if value['student']['term']==1 else '下册')}{value.get('subject_name','数学')}"
+    story=[p('学习，一步一步看得见。',title),p(f"{value['student']['nickname']} / {stage_title} / {value['period_label']}",style),p('生成于 '+datetime.fromisoformat(value['generated_at']).astimezone(ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M')+' 北京时间',small),Spacer(1,10*mm)]
     counts=value['summary']
     cards=Table([[p('题库作答',small),p('有效独立作答',small),p('AI提问',small),p('导入题目',small)],
                  [p(str(counts[k]),title) for k in ('attempts','independent','questions','imported')]],colWidths=[width/4]*4)

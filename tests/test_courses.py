@@ -33,12 +33,13 @@ def setup(tmp_path):
 
 def test_catalog_has_stages_and_verifiable_requirements(setup):
     client, _ = setup
-    assert len(BOOKS) == 56 and len(GOALS) == 186
+    assert len([b for b in BOOKS if b['stage']=='junior']) == 56
+    assert len([g for g in GOALS.values() if g.get('stage','junior')=='junior']) == 196
     for subject in bank.SUBJECTS:
         result = client.get("/api/v1/courses", params={"subject": subject}).json()
         assert result["books"] and result["version"] == VERSION
         for book in result["books"]:
-            assert book["sources"] and book["basis"] in {"pep_toc_verified", "standard_progression"}
+            assert book["sources"] and book["basis"] in {"pep_toc_verified", "standard_progression", "local_toc_verified"}
             assert book["stage_outcomes"]
             assert all(g["can_do"] and g["checks"] for u in book["units"] for g in u["goals"])
     assert client.get("/api/v1/courses?subject=music").status_code == 422
@@ -226,7 +227,7 @@ def test_version_four_migration_preserves_answers(setup):
         db.execute("PRAGMA user_version=4")
     initialize(settings.database_path)
     with connect(settings.database_path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 14
         assert json.loads(db.execute("SELECT result FROM bank_attempts WHERE id=?", (a["attempt_id"],)).fetchone()[0]) == result
         assert db.execute("SELECT COUNT(*) FROM course_question_links").fetchone()[0] > 0
 

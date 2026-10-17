@@ -14,7 +14,7 @@ export function createAnnotationEditor(form, dirty) {
   const a=structuredClone(form.annotation || {schema_version:1,response_format:form.kind==='reference'?'short_answer':form.kind,
     knowledge:{primary:form.knowledge_tags||[],supporting:[],prerequisites:[]},fine_types:form.type_tags||[],
     difficulty:{level:form.difficulty,basis:form.difficulty_basis||'待填写难度依据',origin:'teacher',calibrated:false},
-    curriculum:{grade:form.grade,term:form.term,goal_ids:form.curriculum_goal_ids||[],scope_status:'unknown',basis:'维护者核对'},
+    curriculum:{grade:form.grade,term:form.term,book_id:form.curriculum_book_id||null,goal_ids:form.curriculum_goal_ids||[],scope_status:'unknown',basis:'维护者核对'},
     answer_spec:{mode:form.kind==='reference'?'text':'choice',accepted_answers:[],equivalence:form.kind==='reference'?'manual':'exact',constraints:[],unit:null,tolerance:null},
     parts:[],grading:{mode:form.kind==='reference'?'ai_rubric':'objective',full_score:null,allow_alternative_methods:true,uncertainty_policy:'review_required'},
     review:{status:'candidate',answer_status:'source_only',issues:[],method:'teacher',notes:''},origin:{model:'teacher',batch_id:''}});
@@ -55,7 +55,7 @@ export function createAnnotationEditor(form, dirty) {
     field('答案核验状态',answerStatus),field('待审问题（处理完相应问题后删除对应项）',issues),field('标注审核说明',notes),el('label',{class:'check'},verified,'我已核对小问、答案规则、得分点和待审问题。'));
   return {node:el('section',{class:'editor-section annotation-editor'},el('h3',{},'完整标注与大题判分'),el('p',{class:'subtle'},'分值未知请留空；候选标准供评阅参考，不能自动认证学生掌握。'),el('label',{class:'check'},enabled,'启用完整标注'),body),
     collect(meta){if(!enabled.checked)return null;return {...a,response_format:format.value,knowledge:{primary:values(primary),supporting:values(supporting),prerequisites:values(pre)},fine_types:values(fine),
-      difficulty:{...a.difficulty,level:meta.difficulty,basis:meta.difficulty_basis||'待填写难度依据'},curriculum:{...a.curriculum,grade:meta.grade,term:meta.term,goal_ids:meta.curriculum_goal_ids,scope_status:verified.checked?'reviewed':a.curriculum.scope_status},
+      difficulty:{...a.difficulty,level:meta.difficulty,basis:meta.difficulty_basis||'待填写难度依据'},curriculum:{...a.curriculum,grade:meta.grade,term:meta.term,book_id:meta.curriculum_book_id||null,goal_ids:meta.curriculum_goal_ids,scope_status:verified.checked?'reviewed':a.curriculum.scope_status},
       answer_spec:{...a.answer_spec,mode:mode.value,equivalence:equivalence.value,accepted_answers:values(accepted),constraints:values(constraints),unit:unit.value||null,tolerance:tolerance.value===''?null:Number(tolerance.value)},parts:rows.map(r=>r.collect()),
       grading:{...a.grading,mode:gradeMode.value,full_score:fullScore.value===''?null:Number(fullScore.value),allow_alternative_methods:alternatives.checked},review:{...a.review,status:verified.checked?'reviewed':'candidate',method:verified.checked?'teacher':a.review.method,answer_status:answerStatus.value,issues:values(issues),notes:notes.value}};}};
 }

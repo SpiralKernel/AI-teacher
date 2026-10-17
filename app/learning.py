@@ -83,6 +83,10 @@ def get_attempt(db, attempt_id: str):
     row = db.execute("SELECT * FROM attempts WHERE id=? AND student_id=?", (attempt_id, student_id())).fetchone()
     if not row:
         raise HTTPException(404, "练习记录不存在")
+    from app.training import get_plan
+    training = db.execute('SELECT plan_id FROM training_items WHERE attempt_id=?', (attempt_id,)).fetchone()
+    if training:
+        get_plan(db, training['plan_id'])
     question = json.loads(db.execute("SELECT data FROM questions WHERE id=?", (row["question_id"],)).fetchone()[0])
     return row, question
 
@@ -141,6 +145,8 @@ def submit(db, attempt_id: str, answer: str):
 
 def record_answer(db, attempt_id, q, answer, assisted=False):
     """调用者持有事务及作答行；诊断与普通练习共用判分、去重和证据写入。"""
+    from app.training import grading_context
+    training = grading_context(db, attempt_id, assisted)
     result = grade(q, answer)
     weight = .35 if assisted and result["correct"] else 1.0
     # 同一道题的重复作答保留记录，但不重复增加掌握证据。
@@ -148,9 +154,13 @@ def record_answer(db, attempt_id, q, answer, assisted=False):
                           (student_id(), q["id"], attempt_id)).fetchone() is not None
     result.update(assisted=assisted, evidence_weight=0 if repeated else weight,
                   knowledge_id=q["knowledge_id"], question_type_id=template_type_id(q), repeated_question=repeated)
+    if training:
+        result.update(training)
+        if not training['independent_eligible']:
+            result['evidence_weight'] = 0
     db.execute("UPDATE attempts SET status='submitted',answer=?,result=?,submitted_at=? WHERE id=?",
                (answer, dumps(result), now(), attempt_id))
-    if not repeated:
+    if not repeated and (not training or result['evidence_weight'] > 0):
         db.execute("""INSERT INTO mastery(student_id,knowledge_id,success,failure,attempts,last_seen) VALUES(?,?,?,?,1,?)
             ON CONFLICT(student_id,knowledge_id) DO UPDATE SET
             success=success+excluded.success,failure=failure+excluded.failure,attempts=attempts+1,last_seen=excluded.last_seen""",

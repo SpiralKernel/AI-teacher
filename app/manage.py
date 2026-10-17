@@ -11,7 +11,7 @@ from app.db import connect, initialize, replenish
 
 def main():
     parser = argparse.ArgumentParser(description="AI-teacher 数据维护")
-    parser.add_argument("command", choices=["sync", "backup", "stats", "import-bank", "import-physics-bank", "create-invites", "grant-admin", "revoke-admin", "publish-content", "import-content", "import-math-annotations", "import-physics-annotations"])
+    parser.add_argument("command", choices=["sync", "backup", "stats", "import-bank", "import-physics-bank", "stage-physics-review", "import-physics-full-review", "import-math-full-review", "create-invites", "grant-admin", "revoke-admin", "publish-content", "import-content", "import-math-annotations", "import-physics-annotations"])
     parser.add_argument('--annotations', type=Path, nargs='+', help='Luna 候选标注 JSONL 分片')
     parser.add_argument('--apply', action='store_true', help='通过全量检查后应用；默认只检查，不写题库')
     parser.add_argument('--username', help='授予或撤销维护权限的已有账号')
@@ -23,12 +23,34 @@ def main():
     parser.add_argument("--subject", choices=["math", "physics", "all"], default="all")
     parser.add_argument("--math-quality", action="store_true", help="补充数学细分题型、复核并隔离异常答案")
     parser.add_argument("--source-root", type=Path)
+    parser.add_argument('--review-dir', type=Path, help='固定输入及初审、复核 JSONL 所在目录')
     parser.add_argument("--stage", choices=["junior", "primary", "senior", "unknown", "all"], default="junior")
     args = parser.parse_args()
     settings = Settings()
-    if args.command not in {"backup", "import-math-annotations", "import-physics-annotations"}:
-        initialize(settings.database_path)
-    if args.command in {'import-math-annotations','import-physics-annotations'}:
+    if args.command not in {"backup", "import-math-annotations", "import-physics-annotations", "stage-physics-review", "import-physics-full-review", "import-math-full-review"}:
+        initialize(settings.database_path, with_diagnostic_core=settings.diagnostic_core_enabled)
+    if args.command == 'import-math-full-review':
+        import json
+        from app.math_full_import import apply_full_batch
+        if not args.review_dir:parser.error('需要 --review-dir 指定完整双轮审核目录')
+        if not settings.database_path.exists():parser.error('需要已有数据库；此命令不会初始化学生数据')
+        with connect(settings.database_path) as db:
+            print(json.dumps(apply_full_batch(db, args.review_dir, dry_run=not args.apply), ensure_ascii=False, indent=2))
+    elif args.command == 'import-physics-full-review':
+        import json
+        from app.physics_full_import import apply_full_batch
+        if not args.review_dir:parser.error('需要 --review-dir 指定完整双轮审核目录')
+        if not settings.database_path.exists():parser.error('需要已有数据库；此命令不会初始化学生数据')
+        with connect(settings.database_path) as db:
+            print(json.dumps(apply_full_batch(db, args.review_dir, dry_run=not args.apply), ensure_ascii=False, indent=2))
+    elif args.command == 'stage-physics-review':
+        import json
+        from app.physics_review import stage_batch
+        if not args.annotations or len(args.annotations) != 1:parser.error('需要 --annotations 指定一个精审清单 JSON')
+        records = json.loads(args.annotations[0].read_text())
+        with connect(settings.database_path) as db:
+            print(json.dumps(stage_batch(db, records, dry_run=not args.apply), ensure_ascii=False, indent=2))
+    elif args.command in {'import-math-annotations','import-physics-annotations'}:
         from app.math_annotations import iter_entries, apply_batch
         import json
         if not args.annotations:parser.error('需要 --annotations 指定标注分片')

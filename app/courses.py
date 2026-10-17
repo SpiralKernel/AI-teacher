@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.course_catalog import BOOKS, BOOK_MAP, GOALS, UNITS, VERSION
 from app.db import audit, dumps, now
-from app.identity import scope, book_id as active_book
+from app.identity import scope, subject_id, book_id as active_book
 
 
 class CourseSetting(BaseModel):
@@ -26,8 +26,8 @@ def normalize(text):
 
 
 def validate_scope(subject, book_id=None, unit_id=None):
-    if scope() and (subject != "math" or (book_id and book_id != active_book())):
-        raise HTTPException(403, "题库只开放设置中选择的数学学习阶段")
+    if scope() and (subject != subject_id() or (book_id and book_id != active_book())):
+        raise HTTPException(403, "题库只开放设置中选择的学习阶段")
     if book_id and (book_id not in BOOK_MAP or BOOK_MAP[book_id]["subject"] != subject):
         raise HTTPException(422, "课程册次与科目不匹配")
     if unit_id and (unit_id not in UNITS or not book_id or not unit_id.startswith(book_id + ":")):
@@ -46,7 +46,7 @@ def catalog(subject):
 def get_setting(db, subject):
     catalog(subject)
     if scope():
-        return {"subject":"math", "book_id":active_book(), "unit_id":None}
+        return {"subject":subject_id(), "book_id":active_book(), "unit_id":None}
     row = db.execute("SELECT data FROM course_settings WHERE student_id=current_student() AND subject=?", (subject,)).fetchone()
     if row:
         value = json.loads(row[0])
@@ -67,16 +67,29 @@ def set_setting(db, body):
 
 def matched_goals(q):
     """来源标签与显式规则候选分别留痕；不把候选映射视为教材审定。"""
-    if q.get("stage") != "junior":
+    stage = q.get("stage")
+    if stage == "senior":
+        # Senior tags are only accepted with an explicit primary textbook scope.
+        # Never infer a book from grade/term or fall back to topic aliases.
+        bid = q.get("curriculum_book_id")
+        if not bid or bid not in BOOK_MAP or BOOK_MAP[bid].get("stage") != "senior":
+            return []
+        return [(gid, ['Luna逐题核对候选' if q.get('quality', {}).get('curated') else '显式课程标注'])
+                for gid in q.get('curriculum_goal_ids', []) if gid in GOALS
+                and GOALS[gid].get('stage') == 'senior'
+                and GOALS[gid]['subject'] == q.get('subject')
+                and GOALS[gid]['book_id'] == bid]
+    if stage != "junior":
         return []
     if q.get('curriculum_goal_ids'):
-        return [(gid, ['人工确认']) for gid in q['curriculum_goal_ids'] if gid in GOALS
+        return [(gid, ['独立规则核心题' if q.get('provenance',{}).get('kind')=='original_rule_core' else 'AI逐题核对候选' if q.get('quality',{}).get('curated') else '人工确认']) for gid in q['curriculum_goal_ids'] if gid in GOALS
                 and GOALS[gid]['subject'] == q['subject']
+                and GOALS[gid].get('stage', 'junior') == 'junior'
                 and GOALS[gid]['book_id'] == f"{q['subject']}-{q.get('grade')}-{q.get('term')}"]
     labels = {normalize(str(t)) for t in [*q.get("knowledge_tags", []), *q.get('derived_knowledge_tags', [])]}
     found = []
     for target in GOALS.values():
-        if target["subject"] != q["subject"]:
+        if target["subject"] != q["subject"] or target.get('stage', 'junior') != stage:
             continue
         if q['subject'] == 'math':
             book = BOOK_MAP[target['book_id']]
@@ -107,13 +120,14 @@ def sync_questions(db, question_ids=None, force=False):
         q = json.loads(row["data"])
         signature = hashlib.sha256(dumps([VERSION, q["subject"], q["stage"], q.get("knowledge_tags", []),
                                          q.get('derived_knowledge_tags', []), q.get('grade'), q.get('curriculum_minimum_grade'),
-                                         q.get('curriculum_minimum_book'), q.get('term'), q.get('curriculum_goal_ids')]).encode()).hexdigest()
+                                         q.get('curriculum_minimum_book'), q.get('term'), q.get('curriculum_book_id'),
+                                         q.get('curriculum_goal_ids')]).encode()).hexdigest()
         if not force and existing.get(row["id"]) == signature:
             continue
         db.execute("DELETE FROM course_question_links WHERE question_id=?", (row["id"],))
         for goal_id, aliases in matched_goals(q):
             db.execute("INSERT INTO course_question_links VALUES(?,?,?,?)",
-                       (row["id"], goal_id, VERSION, dumps({"method": "manual_review" if q.get('curriculum_goal_ids') else "source_and_rule_candidate_alias" if q.get('derived_knowledge_tags') else "source_knowledge_alias", "matched_aliases": aliases, "needs_review": not bool(q.get('curriculum_goal_ids'))})))
+                       (row["id"], goal_id, VERSION, dumps({"method": "original_rule_scope" if q.get("provenance",{}).get("kind")=="original_rule_core" else "curated_candidate_scope" if q.get("quality",{}).get("curated") else "manual_review" if q.get('curriculum_goal_ids') else "source_and_rule_candidate_alias" if q.get('derived_knowledge_tags') else "source_knowledge_alias", "matched_aliases": aliases, "needs_review": bool(q.get("quality",{}).get("needs_teacher_review")) or not bool(q.get('curriculum_goal_ids'))})))
         db.execute("INSERT INTO course_mapping_state VALUES(?,?) ON CONFLICT(question_id) DO UPDATE SET signature=excluded.signature",
                    (row["id"], signature))
         changed += 1

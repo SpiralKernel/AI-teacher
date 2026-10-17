@@ -280,9 +280,18 @@ input[type="radio"] {
   margin: 18px 0 26px;
   max-height: none;
 }
-.question-stem .katex-display {
+.katex-display {
+  max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
+}
+.katex {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+  padding-block: 2px;
 }
 .question-stem .katex {
   font-size: 1.05em;
@@ -317,6 +326,8 @@ input[type="radio"] {
   margin-top: 4px;
 }
 .result {
+  min-width: 0;
+  overflow-wrap: anywhere;
   border-top: 1px solid var(--line);
   padding-top: 22px;
   margin-top: 24px;
@@ -368,6 +379,28 @@ input[type="radio"] {
 }
 .type-row .badge {
   white-space: nowrap;
+}
+.progress .type-row > div {
+  flex: 1;
+  min-width: 0;
+}
+.state-policy {
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.type-evidence {
+  margin-top: 8px;
+  max-width: 640px;
+}
+.type-evidence .learning-note {
+  display: block;
+}
+.type-evidence blockquote {
+  margin: 8px 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .gate {
   background: #f5e2da;
@@ -500,6 +533,9 @@ input[type="radio"] {
 }
 .login-tabs button {
   flex: 1;
+}
+[hidden] {
+  display: none !important;
 }
 .split-fields {
   display: flex;
@@ -1592,3 +1628,5 @@ button:hover {
 }
 /* Structured written questions keep each subquestion readable on small screens. */
 .question-parts{display:grid;gap:16px;margin:18px 0;min-width:0}.question-part{padding:16px;border:1px solid #F5E2DA;border-radius:14px;min-width:0}.part-prompt{white-space:pre-wrap;overflow-wrap:anywhere}.grading-detail{padding:14px;background:#FFF8F5;border-radius:12px;margin:12px 0;overflow-wrap:anywhere}.grading-detail blockquote{border-left:3px solid #85A9AF;margin:8px 0;padding:6px 12px;white-space:pre-wrap}.question-parts summary{cursor:pointer}
+.training-card { margin-bottom: 1rem; }
+.training-phase { padding: .75rem 1rem; border-radius: .75rem; background: #F5E2DA; color: #3B3838; }

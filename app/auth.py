@@ -8,7 +8,8 @@ import unicodedata
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from typing import Literal
 
 from app.db import connect, now
 from app.identity import scope, student_id
@@ -22,8 +23,28 @@ class Credentials(BaseModel):
 
 
 class Stage(BaseModel):
-    grade: int = Field(ge=7, le=9)
-    term: int = Field(ge=1, le=2)
+    grade: int | None = Field(default=7, ge=7, le=12)
+    term: int | None = Field(default=1, ge=1, le=2)
+    subject: Literal['math','physics'] = 'math'
+    stage: Literal['junior','senior'] = 'junior'
+    book_id: str | None = Field(default=None, max_length=80)
+
+    @model_validator(mode='after')
+    def valid_course(self):
+        if self.stage == 'senior':
+            from app.course_catalog import BOOK_MAP
+            book = BOOK_MAP.get(self.book_id)
+            if not book or book.get('stage') != 'senior' or book['subject'] != self.subject:
+                raise ValueError('请选择该科目的高中教材册次')
+            self.grade, self.term = None, None
+            return self
+        if self.grade not in {7,8,9} or self.term not in {1,2}:
+            raise ValueError('请选择初中年级和学期')
+        if self.book_id and self.book_id != f'{self.subject}-{self.grade}-{self.term}':
+            raise ValueError('册次与初中学习阶段不符')
+        if self.subject=='physics' and self.grade<8:
+            raise ValueError('人教版物理从八年级开始；提前学习请选择八上。')
+        return self
 
 
 class Registration(Credentials, Stage):
@@ -49,11 +70,23 @@ def digest(token):
 def identity(db, token):
     if not token or len(token) > 200:
         return None
-    row = db.execute('''SELECT s.student_id,p.grade,p.term,a.username,t.nickname,
+    row = db.execute('''SELECT s.student_id,p.grade,p.term,COALESCE(ss.subject,'math') AS subject,a.username,t.nickname,
+        COALESCE(ls.stage,'junior') AS stage,ls.book_id,
         EXISTS(SELECT 1 FROM admin_accounts ad WHERE ad.student_id=s.student_id) AS is_admin FROM auth_sessions s
         JOIN student_scopes p ON p.student_id=s.student_id JOIN accounts a ON a.student_id=s.student_id
-        JOIN students t ON t.id=s.student_id WHERE s.token_hash=? AND s.expires>?''', (digest(token), time.time())).fetchone()
-    return dict(row) if row else None
+        JOIN students t ON t.id=s.student_id LEFT JOIN student_subjects ss ON ss.student_id=s.student_id
+        LEFT JOIN student_learning_scopes ls ON ls.student_id=s.student_id
+        WHERE s.token_hash=? AND s.expires>?''', (digest(token), time.time())).fetchone()
+    if not row:
+        return None
+    value = dict(row)
+    if value['stage'] == 'senior':
+        from app.course_catalog import BOOK_MAP
+        book = BOOK_MAP.get(value['book_id'])
+        if not book or book.get('stage') != 'senior' or book['subject'] != value['subject']:
+            return None
+        value.update(grade=None, term=None, book_title=book['title'])
+    return value
 
 
 def session(db, owner, response, request):
@@ -70,7 +103,11 @@ def create_router(settings):
     def status():
         with connect(settings.database_path) as db:
             needs_setup = db.execute('SELECT COUNT(*) FROM accounts').fetchone()[0] == 0
+        from app.course_catalog import BOOKS
+        available_books = [{'id':b['id'],'subject':b['subject'],'title':b['title'],'stage':'senior'}
+                           for b in BOOKS if b.get('stage') == 'senior']
         return {'authenticated': bool(scope()), 'student': scope(), 'needs_setup': needs_setup,
+                'available_books': available_books,
                 'registration_enabled': settings.registration_enabled,
                 'registration_requires_invite': settings.registration_requires_invite}
 
@@ -98,7 +135,11 @@ def create_router(settings):
             else:
                 db.execute('INSERT INTO students VALUES(?,?,?)', (owner, body.nickname.strip() or '学习者', now()))
             db.execute('INSERT INTO accounts VALUES(?,?,?,?,?)', (name, owner, salt, hashed, now()))
-            db.execute('INSERT INTO student_scopes VALUES(?,?,?)', (owner, body.grade, body.term))
+            # Legacy junior scope is retained separately; senior books have no
+            # universal school-year/semester mapping.
+            db.execute('INSERT INTO student_scopes VALUES(?,?,?)', (owner, body.grade or 7, body.term or 1))
+            db.execute('INSERT INTO student_subjects VALUES(?,?)',(owner,body.subject))
+            db.execute('INSERT INTO student_learning_scopes VALUES(?,?,?)',(owner,body.stage,body.book_id))
             if invite_hash:
                 changed = db.execute('UPDATE registration_invites SET consumed_at=?,used_by=? WHERE code_hash=? AND consumed_at IS NULL', (now(), owner, invite_hash)).rowcount
                 if changed != 1:
@@ -136,10 +177,13 @@ def create_router(settings):
     @router.post('/stage')
     def stage(body: Stage):
         with connect(settings.database_path) as db:
-            db.execute('UPDATE student_scopes SET grade=?,term=? WHERE student_id=?', (body.grade,body.term,student_id()))
+            if body.stage == 'junior':
+                db.execute('UPDATE student_scopes SET grade=?,term=? WHERE student_id=?', (body.grade,body.term,student_id()))
+            db.execute('INSERT INTO student_subjects VALUES(?,?) ON CONFLICT(student_id) DO UPDATE SET subject=excluded.subject',(student_id(),body.subject))
+            db.execute('INSERT INTO student_learning_scopes VALUES(?,?,?) ON CONFLICT(student_id) DO UPDATE SET stage=excluded.stage,book_id=excluded.book_id', (student_id(),body.stage,body.book_id))
             # 保留旧记录，只重置当前选择范围。
             db.execute('DELETE FROM course_settings WHERE student_id=?', (student_id(),))
             db.execute('DELETE FROM student_preferences WHERE student_id=?', (student_id(),))
-        return {'grade': body.grade, 'term': body.term}
+        return {'grade': body.grade, 'term': body.term, 'subject':body.subject,'stage':body.stage,'book_id':body.book_id}
 
     return router

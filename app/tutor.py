@@ -23,6 +23,9 @@ def fallback(q, submitted=False, unavailable=False):
 
 
 async def respond(settings, q, message, student_state, previous, submitted=False):
+    reason = ai_policy.boundary_reason(message)
+    if reason:
+        return ai_policy.boundary_reply(reason)
     if not settings.deepseek_api_key:
         return fallback(q, submitted)
     node = NODE_MAP[q["knowledge_id"]]
@@ -46,8 +49,7 @@ async def respond(settings, q, message, student_state, previous, submitted=False
     messages = ai_policy.messages(system,context)
     for item in previous[-4:]:
         response = json.loads(item["response"])
-        messages.extend([{"role": "user", "content": item["user_message"]},
-                         {"role": "assistant", "content": response["reply"] + "\n" + response["check_question"]}])
+        messages.extend(ai_policy.history_turn(item["user_message"], response))
     messages.append({"role": "user", "content": message})
     try:
         async with httpx.AsyncClient(timeout=settings.ai_timeout_seconds) as client:
@@ -59,7 +61,10 @@ async def respond(settings, q, message, student_state, previous, submitted=False
             result.raise_for_status()
             data = result.json()
             content = TutorContent.model_validate_json(completion_content(data))
-            return {**content.model_dump(), "provider": settings.ai_provider, "notice": "AI 讲解仅作学习参考；评分以题库规则为准。"}
+        reason = ai_policy.response_boundary_reason(content)
+        if reason:
+            return ai_policy.boundary_reply(reason)
+        return {**content.model_dump(), "provider": settings.ai_provider, "notice": "AI 讲解仅作学习参考；评分以题库规则为准。"}
     except (httpx.HTTPError, ValidationError, ValueError, KeyError, IndexError, TypeError):
         # 不把第三方响应正文、请求头或密钥返回前端。
         return fallback(q, submitted, unavailable=True)

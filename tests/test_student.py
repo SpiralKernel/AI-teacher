@@ -202,8 +202,11 @@ def test_five_different_independent_questions_gate_ai_and_retest(setup,monkeypat
     assert home(client)['completed']==before and type_state(client)['independent_count']==5
     assert len(client.get('/api/v1/study/ai/messages?type_id=m7a:subtract-negative').json()['items'])==1
     for _ in range(3):answer(client,settings)
-    assert type_state(client)['status']=='表现稳定'
+    assert type_state(client)['status']=='需要补强'
     assert type_state(client)['retest_count']==3
+    for _ in range(3):answer(client,settings)
+    assert type_state(client)['status']=='表现稳定'
+    assert type_state(client)['retest_count']==6
     assert client.post('/api/v1/study/ai/chat',json=body).status_code==409
     register(client,'bob')
     assert client.get('/api/v1/study/ai/messages?type_id=m7a:subtract-negative').json()['items']==[]

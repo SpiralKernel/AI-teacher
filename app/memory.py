@@ -12,7 +12,9 @@ from zoneinfo import ZoneInfo
 
 from app import ai_policy
 
-VERSION = 'student-memory-2026.10.10-1'
+VERSION = 'student-memory-2026.10.17-1'
+EVIDENCE_WINDOW = 8
+HALF_LIFE_DAYS = 30
 INTERVALS = (1, 3, 7, 14, 30)
 TTL_DAYS = {'question_interest': 7, 'self_report': 7, 'difficulty': 30,
             'guided_success': 14, 'understanding_check': 14, 'reviewed_success': 14}
@@ -45,6 +47,27 @@ def valid_evidence(evidence, at):
         if when is not None and when <= at:
             unique.setdefault(event['identity'], event)
     return list(unique.values())
+
+
+def practice_summary(evidence, at=None):
+    """Time-weighted practice evidence, not a mastery score or recall probability.
+
+    Beijing dates make this stable within one learning day (and cacheable).
+    Independent, distinct evidence only; chat observations never enter here.
+    """
+    at = at or clock()
+    items = valid_evidence(evidence, at)
+    recent = items[-EVIDENCE_WINDOW:]
+    weights = [2 ** (-max(0, (day(at)-day(timestamp(e['time']))).days) / HALF_LIFE_DAYS)
+               for e in recent]
+    total = sum(weights)
+    errors = sum(w for e, w in zip(recent, weights) if not e['correct'])
+    return {'model': VERSION, 'window': EVIDENCE_WINDOW, 'half_life_days': HALF_LIFE_DAYS,
+            'sample_count': len(recent), 'effective_count': round(total, 3),
+            'weighted_error_rate': round(errors / total, 4) if total else None,
+            'recent_independent_count': sum((day(at)-day(timestamp(e['time']))).days <= HALF_LIFE_DAYS for e in items),
+            'basis': 'independent_distinct_items_only',
+            'note': '旧证据每30天权重减半；这是作答证据统计，不是掌握度评分。'}
 
 
 def resolution(after, evidence):
@@ -214,7 +237,7 @@ def retrieve(types, query, focus_type_id=None, limit=8, at=None, context_budget=
         notes = [n for n in item.get('learning_notes', []) if n.get('memory_status') in {'active', 'pending'}
                  and timestamp(n.get('expires_at')) is not None and timestamp(n['expires_at']) > at]
         evidence = item.get('evidence', [])[-3:]
-        entry = {**{k: item.get(k) for k in ('id','name','can_do','status','current_status','learning_status','independent_count','review')},
+        entry = {**{k: item.get(k) for k in ('id','name','can_do','status','current_status','learning_status','independent_count','review','evidence_summary')},
                        'learning_notes': [{k:n.get(k) for k in ('id','source','message_id','kind','note','evidence_quote','created_at',
                            'memory_status','memory_confidence','freshness','last_confirmed_at','expires_at','policy_version','validation')} for n in notes[-3:]],
                  'practice_evidence': [{**{k:e.get(k) for k in ('attempt_id','correct','time','source')},
